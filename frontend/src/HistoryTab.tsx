@@ -94,7 +94,7 @@ export default function HistoryTab({ spends, onAdd, onUpdate, onDelete }: Props)
           <form style={{ marginTop: '12px' }} onSubmit={submitAdd}>
             <div className="row">
               <div className="field grow">
-                <label>Amount</label>
+                <label>Amount, ₽</label>
                 <input
                   type="number"
                   step="0.01"
@@ -143,7 +143,7 @@ export default function HistoryTab({ spends, onAdd, onUpdate, onDelete }: Props)
                 <form onSubmit={submitEdit}>
                   <div className="row">
                     <div className="field grow">
-                      <label>Amount</label>
+                      <label>Amount, ₽</label>
                       <input
                         type="number"
                         step="0.01"
@@ -188,7 +188,7 @@ export default function HistoryTab({ spends, onAdd, onUpdate, onDelete }: Props)
             ) : (
               <li key={s.id} className="spend-item">
                 <div>
-                  <div className="spend-amount">${s.amount.toFixed(2)}</div>
+                  <div className="spend-amount">{s.amount.toFixed(2)} ₽</div>
                   {s.comment && <div className="spend-comment">{s.comment}</div>}
                   <div className="spend-date">{new Date(s.date).toLocaleString()}</div>
                 </div>

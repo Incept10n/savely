@@ -33,12 +33,12 @@ export default function SpendsTab({ onAdd }: Props) {
   return (
     <form className="card" onSubmit={handleSubmit}>
       <div className="field">
-        <label>Amount</label>
+        <label>Amount, ₽</label>
         <input
           type="number"
           step="0.01"
           min="0"
-          placeholder="0.00"
+          placeholder="0.00 ₽"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           required
