@@ -147,7 +147,7 @@ def delete_spend(spend_id, conn=None):
 def init_db():
     conn = _connection()
     try:
-        _execute(conn, SCHEMA)
+        _execute(conn, MYSQL_SCHEMA if not _is_sqlite() else SCHEMA)
         conn.commit()
     finally:
         conn.close()
