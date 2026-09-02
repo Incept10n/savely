@@ -57,6 +57,8 @@ def _connection():
 
 def _execute(conn, query, params=()):
     cur = conn.cursor()
+    if not _is_sqlite():
+        query = query.replace("?", "%s")
     cur.execute(query, params)
     return cur
 
