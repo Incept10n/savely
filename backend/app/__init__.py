@@ -1,0 +1,48 @@
+import os
+
+from flask import Flask, jsonify
+
+from . import db
+
+
+def create_app(test_config=None):
+    app = Flask(__name__)
+
+    app.config.from_mapping(
+        AUTH_STRING=os.environ.get("AUTH_STRING", "changeme"),
+        DB_TYPE=os.environ.get("DB_TYPE", "mysql"),
+        DB_FILE=os.environ.get("DB_FILE", ""),
+        DB_HOST=os.environ.get("DB_HOST", "127.0.0.1"),
+        DB_PORT=int(os.environ.get("DB_PORT", "3306")),
+        DB_USER=os.environ.get("DB_USER", "savely"),
+        DB_PASSWORD=os.environ.get("DB_PASSWORD", ""),
+        DB_NAME=os.environ.get("DB_NAME", "savely"),
+        INIT_DB=os.environ.get("INIT_DB", "1") not in ("0", "false", ""),
+    )
+
+    if test_config is not None:
+        app.config.update(test_config)
+
+    from .auth import require_auth
+    from .routes import bp
+
+    @app.get("/api/health")
+    def health():
+        return jsonify({"status": "ok"})
+
+    @app.get("/api/auth/verify")
+    @require_auth
+    def verify():
+        return jsonify({"ok": True})
+
+    app.register_blueprint(bp)
+
+    if app.config["INIT_DB"]:
+        with app.app_context():
+            db.init_db()
+
+    return app
+
+
+def get_app():
+    return create_app()

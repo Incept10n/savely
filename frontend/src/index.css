@@ -1,0 +1,182 @@
+:root {
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  color: #1f2933;
+  background: #f4f6f8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.logout {
+  background: none;
+  border: 1px solid #cbd2d9;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: #52606d;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.tabs button {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #cbd2d9;
+  background: #ffffff;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.tabs button.active {
+  background: #1992d4;
+  color: #fff;
+  border-color: #1992d4;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #e4e7eb;
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.field {
+  margin-bottom: 12px;
+}
+
+.field label {
+  display: block;
+  font-size: 13px;
+  color: #52606d;
+  margin-bottom: 4px;
+}
+
+.field input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+  font-size: 15px;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+}
+
+.row .grow {
+  flex: 1;
+}
+
+.btn {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 15px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.btn-primary {
+  background: #1992d4;
+  color: #fff;
+}
+
+.btn-danger {
+  background: #e12d39;
+  color: #fff;
+}
+
+.btn-ghost {
+  background: #e4e7eb;
+  color: #1f2933;
+}
+
+.error {
+  color: #e12d39;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.spend-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.spend-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid #eef0f3;
+}
+
+.spend-item:last-child {
+  border-bottom: none;
+}
+
+.spend-amount {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.spend-comment {
+  color: #52606d;
+  font-size: 14px;
+}
+
+.spend-date {
+  color: #7b8794;
+  font-size: 13px;
+}
+
+.spend-actions button {
+  margin-left: 8px;
+  font-size: 13px;
+  padding: 4px 8px;
+}
+
+.login {
+  max-width: 380px;
+  margin: 80px auto;
+  background: #fff;
+  border: 1px solid #e4e7eb;
+  border-radius: 12px;
+  padding: 28px;
+  text-align: center;
+}
+
+.login h1 {
+  margin-top: 0;
+}
