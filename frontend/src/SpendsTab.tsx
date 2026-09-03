@@ -15,7 +15,9 @@ export default function SpendsTab({ spends, onAdd }: Props) {
   const [aiLoading, setAiLoading] = useState(false)
   const [analysis, setAnalysis] = useState<AiAnalysis | null>(null)
   const [aiError, setAiError] = useState('')
-  const [aiCost, setAiCost] = useState(0)
+  const [aiTotalCost, setAiTotalCost] = useState(0)
+  const [aiTodayCost, setAiTodayCost] = useState(0)
+  const [aiDailyLimit, setAiDailyLimit] = useState(15)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -38,9 +40,13 @@ export default function SpendsTab({ spends, onAdd }: Props) {
   }
 
   async function loadAiCost() {
+    const localMidnight = new Date()
+    localMidnight.setHours(0, 0, 0, 0)
     try {
-      const c = await getAiCost()
-      setAiCost(c.totalCostRub)
+      const c = await getAiCost(localMidnight.getTime())
+      setAiTotalCost(c.totalCostRub)
+      setAiTodayCost(c.todayCostRub)
+      setAiDailyLimit(c.dailyLimitRub)
     } catch {
       /* non-fatal */
     }
@@ -69,14 +75,7 @@ export default function SpendsTab({ spends, onAdd }: Props) {
   const uniqueDays = new Set(spends.map((s) => s.date.slice(0, 10))).size
   const dailyAvg = uniqueDays > 0 ? total / uniqueDays : 0
 
-  const now = new Date()
-  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
-    now.getDate(),
-  ).padStart(2, '0')}`
-  const todayTotal = spends
-    .filter((s) => s.date.slice(0, 10) === todayKey)
-    .reduce((sum, s) => sum + s.amount, 0)
-  const aiBlocked = todayTotal > 15
+  const aiBlocked = aiTodayCost > aiDailyLimit
 
   return (
     <div className="summary-card">
@@ -89,13 +88,14 @@ export default function SpendsTab({ spends, onAdd }: Props) {
         className="btn btn-ai"
         onClick={handleAnalyze}
         disabled={aiLoading || spends.length === 0 || aiBlocked}
-        title={aiBlocked ? `AI is unavailable — you already spent ${todayTotal.toFixed(2)} ₽ today` : undefined}
+        title={aiBlocked ? 'AI is disabled for today (daily cost limit reached)' : undefined}
       >
         {aiLoading ? 'Analyzing…' : 'Analyze with AI'}
       </button>
       {aiBlocked && (
         <div className="ai-blocked">
-          AI is unavailable — you already spent {todayTotal.toFixed(2)} ₽ today (limit 15 ₽).
+          Analyze with AI is disabled for today — you already used {aiTodayCost.toFixed(2)} ₽
+          of AI today, over the {aiDailyLimit.toFixed(0)} ₽ daily limit.
         </div>
       )}
       {aiError && <div className="error ai-error">{aiError}</div>}
@@ -122,7 +122,10 @@ export default function SpendsTab({ spends, onAdd }: Props) {
         </div>
       )}
 
-      <div className="ai-cost">AI total spent: {aiCost.toFixed(2)} ₽</div>
+      <div className="ai-cost">
+        AI total spent: {aiTotalCost.toFixed(2)} ₽ · today: {aiTodayCost.toFixed(2)} ₽ /{' '}
+        {aiDailyLimit.toFixed(0)} ₽
+      </div>
 
       <form className="card" onSubmit={handleSubmit}>
         <div className="field">

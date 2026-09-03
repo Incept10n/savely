@@ -104,8 +104,11 @@ export function analyzeSpends() {
 
 export interface AiCost {
   totalCostRub: number
+  todayCostRub: number
+  dailyLimitRub: number
 }
 
-export function getAiCost() {
-  return request<AiCost>('/ai/cost')
+export function getAiCost(since?: number) {
+  const query = since !== undefined ? `?since=${since}` : ''
+  return request<AiCost>(`/ai/cost${query}`)
 }
