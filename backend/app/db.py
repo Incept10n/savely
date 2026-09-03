@@ -26,6 +26,26 @@ CREATE TABLE IF NOT EXISTS spends (
 )
 """
 
+AI_USAGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ai_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_rub REAL NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+MYSQL_AI_USAGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ai_usage (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    input_tokens INT NOT NULL DEFAULT 0,
+    output_tokens INT NOT NULL DEFAULT 0,
+    cost_rub DECIMAL(12,4) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
 
 def _is_sqlite():
     return current_app.config["DB_TYPE"] == "sqlite"
@@ -150,9 +170,44 @@ def init_db():
     conn = _connection()
     try:
         _execute(conn, MYSQL_SCHEMA if not _is_sqlite() else SCHEMA)
+        _execute(
+            conn,
+            MYSQL_AI_USAGE_SCHEMA if not _is_sqlite() else AI_USAGE_SCHEMA,
+        )
         conn.commit()
     finally:
         conn.close()
+
+
+def record_ai_usage(input_tokens, output_tokens, cost_rub, conn=None):
+    close = conn is None
+    if conn is None:
+        conn = _connection()
+    try:
+        cur = _execute(
+            conn,
+            "INSERT INTO ai_usage (input_tokens, output_tokens, cost_rub) VALUES (?, ?, ?)",
+            (input_tokens, output_tokens, cost_rub),
+        )
+        cur.close()
+        conn.commit()
+    finally:
+        if close:
+            conn.close()
+
+
+def get_ai_total_cost(conn=None):
+    close = conn is None
+    if conn is None:
+        conn = _connection()
+    try:
+        cur = _execute(conn, "SELECT COALESCE(SUM(cost_rub), 0) AS total FROM ai_usage")
+        row = cur.fetchone()
+        cur.close()
+        return float(row["total"]) if row else 0.0
+    finally:
+        if close:
+            conn.close()
 
 
 def _build_database_url():

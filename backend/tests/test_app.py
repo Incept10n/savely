@@ -20,6 +20,11 @@ def app():
             "DB_TYPE": "sqlite",
             "DB_FILE": path,
             "INIT_DB": True,
+            "YANDEX_AI_API_KEY": "test-key",
+            "YANDEX_AI_FOLDER_ID": "folder-test",
+            "YANDEX_AI_MODEL_URI": "gpt://folder-test/yandexgpt-5.1/latest",
+            "YANDEX_AI_INPUT_PRICE_PER_1K": 0.8,
+            "YANDEX_AI_OUTPUT_PRICE_PER_1K": 0.8,
         }
     )
     yield app
@@ -126,3 +131,72 @@ class TestSpends:
     def test_delete_missing(self, client):
         resp = client.delete("/api/spends/99999", headers=AUTH_HEADER)
         assert resp.status_code == 404
+
+
+class TestAi:
+    def _mock_response(self, monkeypatch, text, usage=None):
+        usage = usage or {
+            "inputTextTokens": "100",
+            "completionTokens": "50",
+            "totalTokens": "150",
+        }
+
+        class FakeResp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "result": {
+                        "alternatives": [
+                            {
+                                "message": {"role": "assistant", "text": text},
+                                "status": "ALTERNATIVE_STATUS_FINAL",
+                            }
+                        ],
+                        "usage": usage,
+                    }
+                }
+
+        import app.ai as ai
+
+        monkeypatch.setattr(ai.requests, "post", lambda *a, **k: FakeResp())
+
+    def test_analyze_requires_auth(self, client):
+        resp = client.post("/api/ai/analyze")
+        assert resp.status_code == 401
+
+    def test_analyze_returns_categories_and_notice(self, client, monkeypatch):
+        self._mock_response(
+            monkeypatch,
+            '{"categories":[{"name":"Продукты","spends":[{"date":"2024-06-01",'
+            '"amount":150.5,"comment":"groceries"}]}],'
+            '"notice":"Всё отлично, лишнего не тратишь."}',
+        )
+        resp = client.post("/api/ai/analyze", headers=AUTH_HEADER)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["categories"][0]["name"] == "Продукты"
+        assert body["categories"][0]["spends"][0]["amount"] == 150.5
+        assert "Всё отлично" in body["notice"]
+        assert body["month"]
+
+    def test_analyze_records_cost_and_cumulative(self, client, monkeypatch):
+        self._mock_response(
+            monkeypatch,
+            '{"categories":[],"notice":"ok"}',
+            usage={"inputTextTokens": "1000", "completionTokens": "1000"},
+        )
+        client.post("/api/ai/analyze", headers=AUTH_HEADER)
+        cost = client.get("/api/ai/cost", headers=AUTH_HEADER).get_json()
+        # 1000/1000 in + 1000/1000 out at 0.8/1k each = 0.8 + 0.8 = 1.6
+        assert cost["totalCostRub"] == pytest.approx(1.6)
+
+        # second call accumulates
+        client.post("/api/ai/analyze", headers=AUTH_HEADER)
+        cost = client.get("/api/ai/cost", headers=AUTH_HEADER).get_json()
+        assert cost["totalCostRub"] == pytest.approx(3.2)
+
+    def test_cost_requires_auth(self, client):
+        resp = client.get("/api/ai/cost")
+        assert resp.status_code == 401

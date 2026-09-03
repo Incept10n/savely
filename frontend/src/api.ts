@@ -86,3 +86,26 @@ export function updateSpend(id: number, payload: { amount: number; comment: stri
 export function deleteSpend(id: number) {
   return request<void>(`/spends/${id}`, { method: 'DELETE' })
 }
+
+export interface AiCategory {
+  name: string
+  spends: { date: string; amount: number; comment: string }[]
+}
+
+export interface AiAnalysis {
+  categories: AiCategory[]
+  notice: string
+  month: string
+}
+
+export function analyzeSpends() {
+  return request<AiAnalysis>('/ai/analyze', { method: 'POST' })
+}
+
+export interface AiCost {
+  totalCostRub: number
+}
+
+export function getAiCost() {
+  return request<AiCost>('/ai/cost')
+}

@@ -241,3 +241,75 @@ body {
   margin-top: 4px;
   margin-bottom: 16px;
 }
+
+.btn-ai {
+  background: var(--accent);
+  color: #fff;
+  display: inline-block;
+}
+
+.btn-ai:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ai-cost {
+  font-size: 13px;
+  color: var(--text-faint);
+  margin-top: 12px;
+  margin-bottom: 16px;
+}
+
+.ai-error {
+  margin-top: 12px;
+}
+
+.ai-result {
+  text-align: left;
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.ai-notice {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.ai-month {
+  font-size: 13px;
+  color: var(--text-faint);
+  margin-bottom: 16px;
+}
+
+.ai-category {
+  margin-bottom: 16px;
+}
+
+.ai-category-name {
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+
+.ai-spends {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.ai-spend {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 14px;
+}
+
+.ai-amount {
+  font-weight: 600;
+  white-space: nowrap;
+}
+

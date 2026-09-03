@@ -1,11 +1,12 @@
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
-from . import db
+from . import ai, db
 from .auth import require_auth
 
 bp = Blueprint("spends", __name__, url_prefix="/api/spends")
+ai_bp = Blueprint("ai", __name__, url_prefix="/api/ai")
 
 
 def _parse_payload(payload):
@@ -88,3 +89,46 @@ def delete_spend(spend_id):
     if not deleted:
         return jsonify({"error": "not found"}), 404
     return "", 204
+
+
+@ai_bp.route("/analyze", methods=["POST"])
+@require_auth
+def analyze():
+    if not current_app.config["YANDEX_AI_API_KEY"]:
+        return jsonify({"error": "AI is not configured"}), 503
+
+    rows = db.list_spends()
+    spends = [
+        {
+            "date": _serialize({"spent_at": r["spent_at"]})["date"],
+            "amount": float(r["amount"]),
+            "comment": r["comment"],
+        }
+        for r in rows
+    ]
+
+    try:
+        result = ai.analyze_spends(spends)
+    except Exception as exc:  # noqa: BLE001 - surface any AI/provider error
+        return jsonify({"error": f"AI request failed: {exc}"}), 502
+
+    cost = ai.compute_cost(
+        result["usage"],
+        current_app.config["YANDEX_AI_INPUT_PRICE_PER_1K"],
+        current_app.config["YANDEX_AI_OUTPUT_PRICE_PER_1K"],
+    )
+    db.record_ai_usage(result["usage"]["input_tokens"], result["usage"]["output_tokens"], cost)
+
+    return jsonify(
+        {
+            "categories": result["categories"],
+            "notice": result["notice"],
+            "month": result["month"],
+        }
+    )
+
+
+@ai_bp.route("/cost", methods=["GET"])
+@require_auth
+def ai_cost():
+    return jsonify({"totalCostRub": db.get_ai_total_cost()})

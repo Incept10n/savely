@@ -18,13 +18,21 @@ def create_app(test_config=None):
         DB_PASSWORD=os.environ.get("DB_PASSWORD", ""),
         DB_NAME=os.environ.get("DB_NAME", "savely"),
         INIT_DB=os.environ.get("INIT_DB", "1") not in ("0", "false", ""),
+        YANDEX_AI_API_KEY=os.environ.get("YANDEX_AI_API_KEY", ""),
+        YANDEX_AI_FOLDER_ID=os.environ.get("YANDEX_AI_FOLDER_ID", ""),
+        YANDEX_AI_MODEL_URI=os.environ.get(
+            "YANDEX_AI_MODEL_URI",
+            "gpt://b1g22vmvppgsen3ogkj9/yandexgpt-5.1/latest",
+        ),
+        YANDEX_AI_INPUT_PRICE_PER_1K=float(os.environ.get("YANDEX_AI_INPUT_PRICE_PER_1K", "0.8")),
+        YANDEX_AI_OUTPUT_PRICE_PER_1K=float(os.environ.get("YANDEX_AI_OUTPUT_PRICE_PER_1K", "0.8")),
     )
 
     if test_config is not None:
         app.config.update(test_config)
 
     from .auth import require_auth
-    from .routes import bp
+    from .routes import ai_bp, bp
 
     @app.get("/api/health")
     def health():
@@ -36,6 +44,7 @@ def create_app(test_config=None):
         return jsonify({"ok": True})
 
     app.register_blueprint(bp)
+    app.register_blueprint(ai_bp)
 
     if app.config["INIT_DB"]:
         with app.app_context():
