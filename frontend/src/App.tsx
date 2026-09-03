@@ -95,7 +95,7 @@ export default function App() {
         </button>
       </div>
       {tab === 'spends' ? (
-        <SpendsTab onAdd={addSpend} />
+        <SpendsTab spends={spends} onAdd={addSpend} />
       ) : (
         <HistoryTab
           spends={spends}

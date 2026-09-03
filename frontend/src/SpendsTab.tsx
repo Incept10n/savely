@@ -1,10 +1,12 @@
 import { useState } from 'react'
+import type { Spend } from './api'
 
 interface Props {
+  spends: Spend[]
   onAdd: (amount: number, comment: string) => Promise<void>
 }
 
-export default function SpendsTab({ onAdd }: Props) {
+export default function SpendsTab({ spends, onAdd }: Props) {
   const [amount, setAmount] = useState('')
   const [comment, setComment] = useState('')
   const [error, setError] = useState('')
@@ -30,10 +32,19 @@ export default function SpendsTab({ onAdd }: Props) {
     }
   }
 
+  const total = spends.reduce((sum, s) => sum + s.amount, 0)
+  const uniqueDays = new Set(spends.map((s) => s.date.slice(0, 10))).size
+  const dailyAvg = uniqueDays > 0 ? total / uniqueDays : 0
+
   return (
-    <form className="card" onSubmit={handleSubmit}>
-      <div className="field">
-        <label>Amount, ₽</label>
+    <div className="summary-card">
+      <div className="summary-total">{total.toFixed(2)} ₽</div>
+      {uniqueDays > 0 && (
+        <div className="summary-avg">≈ {dailyAvg.toFixed(2)} ₽ / day</div>
+      )}
+      <form className="card" onSubmit={handleSubmit}>
+        <div className="field">
+          <label>Amount, ₽</label>
         <input
           type="number"
           step="0.01"
@@ -58,5 +69,6 @@ export default function SpendsTab({ onAdd }: Props) {
         {loading ? 'Saving…' : 'Apply'}
       </button>
     </form>
+    </div>
   )
 }
