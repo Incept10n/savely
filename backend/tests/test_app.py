@@ -283,6 +283,32 @@ class TestAi:
         resp = client.get("/api/ai/cost")
         assert resp.status_code == 401
 
+    def test_cost_reports_daily_window(self, client, monkeypatch):
+        # first record today
+        self._mock_response(
+            monkeypatch,
+            '{"categories":[],"notice":"ok"}',
+            usage={"inputTextTokens": "1000", "completionTokens": "1000"},
+        )
+        client.post("/api/ai/analyze", headers=AUTH_HEADER)
+
+        # `since` = start of today (epoch ms). created_at default is UTC now,
+        # so a since boundary in the past (e.g. yesterday) includes it.
+        import time
+
+        yesterday_ms = int((time.time() - 86400) * 1000)
+        tomorrow_ms = int((time.time() + 86400) * 1000)
+
+        resp = client.get(f"/api/ai/cost?since={yesterday_ms}", headers=AUTH_HEADER)
+        body = resp.get_json()
+        assert body["todayCostRub"] == pytest.approx(1.6)
+        assert body["totalCostRub"] == pytest.approx(1.6)
+        assert body["dailyLimitRub"] == 15
+
+        # a since boundary in the future excludes today's record
+        resp = client.get(f"/api/ai/cost?since={tomorrow_ms}", headers=AUTH_HEADER)
+        assert resp.get_json()["todayCostRub"] == pytest.approx(0.0)
+
     def test_parse_result_handles_raw_control_characters(self):
         from app.ai import _escape_control_chars, _parse_result
 

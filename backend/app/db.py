@@ -210,6 +210,26 @@ def get_ai_total_cost(conn=None):
             conn.close()
 
 
+def get_ai_cost_since(since_dt, conn=None):
+    # Sums AI cost for usage recorded at/after `since_dt` (a datetime). Both
+    # SQLite and MySQL store created_at in UTC, so a UTC boundary is compared.
+    close = conn is None
+    if conn is None:
+        conn = _connection()
+    try:
+        cur = _execute(
+            conn,
+            "SELECT COALESCE(SUM(cost_rub), 0) AS total FROM ai_usage WHERE created_at >= ?",
+            (since_dt,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        return float(row["total"]) if row else 0.0
+    finally:
+        if close:
+            conn.close()
+
+
 def _build_database_url():
     user = urllib.parse.quote(current_app.config["DB_USER"])
     password = urllib.parse.quote(current_app.config["DB_PASSWORD"])

@@ -30,6 +30,7 @@ def create_app(test_config=None):
         # completionOptions.maxTokens). Used only for the pre-request cost guard.
         YANDEX_AI_MODEL_MAX_TOKENS=int(os.environ.get("YANDEX_AI_MODEL_MAX_TOKENS", "1000")),
         YANDEX_AI_MAX_COST_PER_REQUEST=float(os.environ.get("YANDEX_AI_MAX_COST_PER_REQUEST", "50")),
+        YANDEX_AI_DAILY_LIMIT=float(os.environ.get("YANDEX_AI_DAILY_LIMIT", "15")),
     )
 
     if test_config is not None:

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -158,4 +158,23 @@ def analyze():
 @ai_bp.route("/cost", methods=["GET"])
 @require_auth
 def ai_cost():
-    return jsonify({"totalCostRub": db.get_ai_total_cost()})
+    total = db.get_ai_total_cost()
+    daily_limit = current_app.config["YANDEX_AI_DAILY_LIMIT"]
+    # `since` = epoch milliseconds of the user's local start-of-today.
+    since = request.args.get("since")
+    today = total
+    if since:
+        try:
+            utc_boundary = datetime.fromtimestamp(
+                int(since) / 1000.0, timezone.utc
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            today = db.get_ai_cost_since(utc_boundary)
+        except (TypeError, ValueError, OSError):
+            today = total
+    return jsonify(
+        {
+            "totalCostRub": total,
+            "todayCostRub": round(today, 4),
+            "dailyLimitRub": daily_limit,
+        }
+    )
