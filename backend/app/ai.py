@@ -18,27 +18,27 @@ def _month_spends(spends):
 
 def _build_prompt(spends):
     lines = []
-    for s in sorted(spends, key=lambda x: x.get("date") or ""):
-        lines.append(f"{s.get('date', '')[:10]} {s.get('amount'):.2f} ₽ {s.get('comment','')}".rstrip())
+    for i, s in enumerate(spends):
+        lines.append(f"{i}. {s.get('date', '')[:10]} {s.get('amount'):.2f} ₽ {s.get('comment','')}".rstrip())
     body = "\n".join(lines) if lines else "(нет трат за этот месяц)"
 
     system = (
         "Ты финансовый аналитик. Разнеси каждую трату по категориям "
-        "(например: Продукты, Транспорт, Развлечения, Кафе/Рестораны, " 
+        "(например: Продукты, Транспорт, Развлечения, Кафе/Рестораны, "
         "Коммуналка, Здоровье, Покупки, Другое). "
-        "Верни ТОЛЬКО валидный JSON без пояснений и без markdown-обёртки "
-        "в следующей схеме:\n"
-        '{"categories":[{"name":"Название категории",'
-        '"spends":[{"date":"YYYY-MM-DD","amount":123.45,"comment":"комментарий"}]}],'
+        "Верни ТОЛЬКО валидный JSON без пояснений, без markdown-обёртки и "
+        "без повторения текста трат, в следующей схеме:\n"
+        '{"categories":[{"name":"Название категории","indices":[0,1,2]}],'
         '"notice":"короткое резюме аналитики на русском"}'
     )
     user = (
-        "Данные трат за текущий месяц (в рублях):\n"
+        "Данные трат за текущий месяц (в рублях), каждое пронумеровано:\n"
         f"{body}\n\n"
-        "Отнеси каждую трату к категории, сохрани amount, date и comment как есть. "
-        "В notice дай 2-3 коротких предложения общей аналитики: если всё хорошо, "
-        "скажи что-то вроде «Всё отлично, лишнего не тратишь»; если есть перекосы, "
-        "укажи категорию с наибольшими тратами и приведи примеры расходов из неё."
+        "Отнеси каждую трату к ровно одной категории и укажи её индекс из списка в "
+        "массиве indices. НЕ повторяй сами траты, только индексы. Каждый индекс должен "
+        "использоваться ровно один раз. 2-3 коротких предложения общей аналитики в notice: "
+        "если всё хорошо, скажи что-то вроде «Всё отлично, лишнего не тратишь»; если есть "
+        "перекосы, укажи категорию с наибольшими тратами и приведи примеры расходов из неё."
     )
     return system, user
 
@@ -83,15 +83,12 @@ def _parse_result(text):
         return json.loads(text)
     except json.JSONDecodeError as exc:
         logger.warning("AI JSON parse failed (%s); raw text:\n%s", exc, text)
-        # Escape raw control chars inside string values; keep structural
-        # whitespace (pretty-printed JSON) intact.
         return json.loads(_escape_control_chars(text))
 
 
 def _escape_control_chars(text):
     # Only escape control characters that appear INSIDE double-quoted JSON
-    # strings, so structural whitespace between tokens stays intact. Tracks
-    # string state while respecting backslash escapes.
+    # strings, keeping structural whitespace intact.
     out = []
     in_string = False
     escaped = False
@@ -132,7 +129,7 @@ def analyze_spends(spends):
         "completionOptions": {
             "stream": False,
             "temperature": 0.1,
-            "maxTokens": 1500,
+            "maxTokens": 1000,
         },
         "messages": [
             {"role": "system", "text": system},
@@ -159,8 +156,29 @@ def analyze_spends(spends):
             break
 
     parsed = _parse_result(text)
+    categories = []
+    seen = set()
+    for cat in parsed.get("categories", []):
+        spends_out = []
+        for idx in cat.get("indices") or []:
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                continue
+            if idx not in seen and 0 <= idx < len(month_spends):
+                seen.add(idx)
+                s = month_spends[idx]
+                spends_out.append(
+                    {
+                        "date": s.get("date", ""),
+                        "amount": s.get("amount"),
+                        "comment": s.get("comment", ""),
+                    }
+                )
+        categories.append({"name": cat.get("name", "Другое"), "spends": spends_out})
+
     return {
-        "categories": parsed.get("categories", []),
+        "categories": categories,
         "notice": parsed.get("notice", ""),
         "usage": _extract_usage(result),
         "month": datetime.now().strftime("%Y-%m"),

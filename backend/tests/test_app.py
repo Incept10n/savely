@@ -167,17 +167,19 @@ class TestAi:
         assert resp.status_code == 401
 
     def test_analyze_returns_categories_and_notice(self, client, monkeypatch):
+        _post(client, {"amount": 150.5, "comment": "groceries"})
+        _post(client, {"amount": 300, "comment": "taxi"})
         self._mock_response(
             monkeypatch,
-            '{"categories":[{"name":"Продукты","spends":[{"date":"2024-06-01",'
-            '"amount":150.5,"comment":"groceries"}]}],'
+            '{"categories":[{"name":"Продукты","indices":[0]}],'
             '"notice":"Всё отлично, лишнего не тратишь."}',
         )
         resp = client.post("/api/ai/analyze", headers=AUTH_HEADER)
         assert resp.status_code == 200
         body = resp.get_json()
         assert body["categories"][0]["name"] == "Продукты"
-        assert body["categories"][0]["spends"][0]["amount"] == 150.5
+        # index 0 maps back to the first (most recent) spend: the "taxi" one
+        assert body["categories"][0]["spends"][0]["comment"] == "taxi"
         assert "Всё отлично" in body["notice"]
         assert body["month"]
 
@@ -198,7 +200,10 @@ class TestAi:
                             {
                                 "message": {
                                     "role": "assistant",
-                                    "text": '{"categories":[],"notice":"ok"}',
+                                    "text": (
+                                        '{"categories":[{"name":"А","indices":[0]}],'
+                                        '"notice":"ok"}'
+                                    ),
                                 },
                                 "status": "ALTERNATIVE_STATUS_FINAL",
                             }
