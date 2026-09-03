@@ -19,6 +19,9 @@ type Tab = 'spends' | 'history'
 export default function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(hasToken())
   const [tab, setTab] = useState<Tab>('spends')
+  const [theme, setTheme] = useState<'light' | 'dark'>(
+    () => (localStorage.getItem('savely-theme') as 'light' | 'dark') || 'light',
+  )
   const [spends, setSpends] = useState<Spend[]>([])
   const [error, setError] = useState('')
 
@@ -53,6 +56,21 @@ export default function App() {
       })
   }, [])
 
+  function toggleTheme() {
+    const next = theme === 'light' ? 'dark' : 'light'
+    setTheme(next)
+    localStorage.setItem('savely-theme', next)
+  }
+
+  useEffect(() => {
+    const root = document.documentElement
+    if (theme === 'dark') {
+      root.dataset.theme = 'dark'
+    } else {
+      delete root.dataset.theme
+    }
+  }, [theme])
+
   if (!authenticated) {
     return <Login onSuccess={() => setAuthenticated(true)} />
   }
@@ -81,9 +99,14 @@ export default function App() {
     <div className="app">
       <div className="header">
         <h1>Savely</h1>
-        <button className="logout" onClick={logout}>
-          Logout
-        </button>
+        <div className="header-right">
+          <button className="theme-toggle" onClick={toggleTheme}>
+            {theme === 'light' ? 'Dark' : 'Light'}
+          </button>
+          <button className="logout" onClick={logout}>
+            Logout
+          </button>
+        </div>
       </div>
       {error && <div className="error">{error}</div>}
       <div className="tabs">
