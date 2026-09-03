@@ -47,7 +47,40 @@ def _parse_result(text):
         if text.startswith("json"):
             text = text[4:]
         text = text.strip()
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Model output occasionally contains raw control chars (e.g. a literal
+        # newline inside a comment/value). Escape them so the JSON parses,
+        # while leaving real backslash escapes intact.
+        return json.loads(_escape_control_chars(text))
+
+
+def _escape_control_chars(text):
+    # Only escape control characters that appear INSIDE double-quoted JSON
+    # strings, so structural whitespace between tokens stays intact. Tracks
+    # string state while respecting backslash escapes.
+    out = []
+    in_string = False
+    escaped = False
+    for ch in text:
+        if escaped:
+            out.append(ch)
+            escaped = False
+            continue
+        if ch == "\\":
+            out.append(ch)
+            escaped = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            out.append(ch)
+            continue
+        if in_string and ord(ch) < 0x20:
+            out.append("\\u%04x" % ord(ch))
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 def _extract_usage(result):

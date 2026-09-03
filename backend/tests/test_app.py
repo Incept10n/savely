@@ -244,3 +244,21 @@ class TestAi:
     def test_cost_requires_auth(self, client):
         resp = client.get("/api/ai/cost")
         assert resp.status_code == 401
+
+    def test_parse_result_handles_raw_control_characters(self):
+        from app.ai import _escape_control_chars, _parse_result
+
+        # a raw newline inside a comment value (as the model sometimes emits)
+        text = ('{"categories":[{"name":"Кафе","spends":[{"amount":150.5,'
+                '"comment":"line1\nline2"}]}],"notice":"ok"}')
+        parsed = _parse_result(text)
+        assert parsed["categories"][0]["spends"][0]["comment"] == "line1\nline2"
+
+        import json
+
+        escaped = _escape_control_chars(text)
+        assert json.loads(escaped)["categories"][0]["spends"][0]["comment"] == "line1\nline2"
+
+        # pretty-printed JSON (structural newlines) with a raw newline in a value
+        pretty = '{\n  "categories": [],\n  "notice": "a\nb"\n}'
+        assert _parse_result(pretty)["notice"] == "a\nb"
