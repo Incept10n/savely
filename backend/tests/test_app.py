@@ -262,3 +262,7 @@ class TestAi:
         # pretty-printed JSON (structural newlines) with a raw newline in a value
         pretty = '{\n  "categories": [],\n  "notice": "a\nb"\n}'
         assert _parse_result(pretty)["notice"] == "a\nb"
+
+        # model wraps the JSON with prose before/after
+        wrapped = 'Вот результат:\n{"categories":[],"notice":"ok"}\nНадеюсь, помог!'
+        assert _parse_result(wrapped)["notice"] == "ok"

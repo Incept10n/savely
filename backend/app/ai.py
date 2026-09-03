@@ -1,8 +1,11 @@
 import json
+import logging
 from datetime import datetime
 
 import requests
 from flask import current_app
+
+logger = logging.getLogger(__name__)
 
 ENDPOINT = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 
@@ -47,12 +50,41 @@ def _parse_result(text):
         if text.startswith("json"):
             text = text[4:]
         text = text.strip()
+
+    # Isolate the outermost JSON object to drop any trailing explanation or
+    # leading prose the model may add around the data.
+    start = text.find("{")
+    if start != -1:
+        depth = 0
+        in_string = False
+        escaped = False
+        for idx in range(start, len(text)):
+            ch = text[idx]
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\":
+                escaped = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    text = text[start : idx + 1]
+                    break
+
     try:
         return json.loads(text)
-    except json.JSONDecodeError:
-        # Model output occasionally contains raw control chars (e.g. a literal
-        # newline inside a comment/value). Escape them so the JSON parses,
-        # while leaving real backslash escapes intact.
+    except json.JSONDecodeError as exc:
+        logger.warning("AI JSON parse failed (%s); raw text:\n%s", exc, text)
+        # Escape raw control chars inside string values; keep structural
+        # whitespace (pretty-printed JSON) intact.
         return json.loads(_escape_control_chars(text))
 
 
