@@ -253,6 +253,12 @@ body {
   cursor: not-allowed;
 }
 
+.ai-blocked {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--danger, #e5484d);
+}
+
 .ai-cost {
   font-size: 13px;
   color: var(--text-faint);

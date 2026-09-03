@@ -69,6 +69,15 @@ export default function SpendsTab({ spends, onAdd }: Props) {
   const uniqueDays = new Set(spends.map((s) => s.date.slice(0, 10))).size
   const dailyAvg = uniqueDays > 0 ? total / uniqueDays : 0
 
+  const now = new Date()
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+    now.getDate(),
+  ).padStart(2, '0')}`
+  const todayTotal = spends
+    .filter((s) => s.date.slice(0, 10) === todayKey)
+    .reduce((sum, s) => sum + s.amount, 0)
+  const aiBlocked = todayTotal > 15
+
   return (
     <div className="summary-card">
       <div className="summary-total">{total.toFixed(2)} ₽</div>
@@ -79,10 +88,16 @@ export default function SpendsTab({ spends, onAdd }: Props) {
       <button
         className="btn btn-ai"
         onClick={handleAnalyze}
-        disabled={aiLoading || spends.length === 0}
+        disabled={aiLoading || spends.length === 0 || aiBlocked}
+        title={aiBlocked ? `AI is unavailable — you already spent ${todayTotal.toFixed(2)} ₽ today` : undefined}
       >
         {aiLoading ? 'Analyzing…' : 'Analyze with AI'}
       </button>
+      {aiBlocked && (
+        <div className="ai-blocked">
+          AI is unavailable — you already spent {todayTotal.toFixed(2)} ₽ today (limit 15 ₽).
+        </div>
+      )}
       {aiError && <div className="error ai-error">{aiError}</div>}
 
       {analysis && (
