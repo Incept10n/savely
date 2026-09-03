@@ -181,6 +181,50 @@ class TestAi:
         assert "Всё отлично" in body["notice"]
         assert body["month"]
 
+    def test_analyze_with_existing_spends(self, client, monkeypatch):
+        _post(client, {"amount": 150.5, "comment": "groceries"})
+        _post(client, {"amount": 300, "comment": "taxi"})
+
+        requests_calls = []
+
+        class FakeResp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "result": {
+                        "alternatives": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "text": '{"categories":[],"notice":"ok"}',
+                                },
+                                "status": "ALTERNATIVE_STATUS_FINAL",
+                            }
+                        ],
+                        "usage": {
+                            "inputTextTokens": "10",
+                            "completionTokens": "10",
+                        },
+                    }
+                }
+
+        import app.ai as ai
+
+        def fake_post(*args, **kwargs):
+            requests_calls.append((args, kwargs))
+            return FakeResp()
+
+        monkeypatch.setattr(ai.requests, "post", fake_post)
+        resp = client.post("/api/ai/analyze", headers=AUTH_HEADER)
+        assert resp.status_code == 200
+        # both spends (amount + comment) must be sent to the model
+        sent = requests_calls[0][1]["json"]
+        user_text = sent["messages"][-1]["text"]
+        assert "groceries" in user_text
+        assert "taxi" in user_text
+
     def test_analyze_records_cost_and_cumulative(self, client, monkeypatch):
         self._mock_response(
             monkeypatch,

@@ -47,6 +47,12 @@ def _serialize(row):
     }
 
 
+def _iso_date(spent_at):
+    if isinstance(spent_at, datetime):
+        return spent_at.isoformat()
+    return str(spent_at)
+
+
 @bp.route("", methods=["GET"])
 @require_auth
 def list_spends():
@@ -100,7 +106,7 @@ def analyze():
     rows = db.list_spends()
     spends = [
         {
-            "date": _serialize({"spent_at": r["spent_at"]})["date"],
+            "date": _iso_date(r["spent_at"]),
             "amount": float(r["amount"]),
             "comment": r["comment"],
         }
