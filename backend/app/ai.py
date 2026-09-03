@@ -1,11 +1,8 @@
 import json
-import logging
 from datetime import datetime
 
 import requests
 from flask import current_app
-
-logger = logging.getLogger(__name__)
 
 ENDPOINT = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 
@@ -81,8 +78,9 @@ def _parse_result(text):
 
     try:
         return json.loads(text)
-    except json.JSONDecodeError as exc:
-        logger.warning("AI JSON parse failed (%s); raw text:\n%s", exc, text)
+    except json.JSONDecodeError:
+        # Escape raw control chars inside string values; keep structural
+        # whitespace (pretty-printed JSON) intact.
         return json.loads(_escape_control_chars(text))
 
 
