@@ -16,7 +16,7 @@ Live at **https://savely.inceptech.ru/** — amounts are displayed in **rubles (
 
 ## Auth
 
-A shared access string `AUTH_STRING=iloveonyme214365` protects the API. Every `/api` request **except** `/api/health` must send it as the `X-Auth-String` header. The frontend stores it in `localStorage['savely-auth']` after login. Enforced by `backend/app/auth.py` (`require_auth` decorator).
+A shared access string `AUTH_STRING` protects the API (value lives in the OpenBao `savely` secret, not in this repo). Every `/api` request **except** `/api/health` must send it as the `X-Auth-String` header. The frontend stores it in `localStorage['savely-auth']` after login. Enforced by `backend/app/auth.py` (`require_auth` decorator).
 
 ## Backend API
 
@@ -39,7 +39,7 @@ Managed via ExternalSecret → k8s secret `savely-secret` (source: OpenBao `secr
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `AUTH_STRING` | `changeme` | Access string (`iloveonyme214365` in prod) |
+| `AUTH_STRING` | `changeme` | Access string (real value lives in OpenBao `savely` secret) |
 | `DB_TYPE` | `mysql` | `mysql` or `sqlite` (tests) |
 | `DB_FILE` | | SQLite file path (tests) |
 | `DB_HOST` | `127.0.0.1` | MySQL host (prod: `mysql.savely.svc.cluster.local`) |
