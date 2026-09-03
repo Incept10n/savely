@@ -246,6 +246,39 @@ class TestAi:
         cost = client.get("/api/ai/cost", headers=AUTH_HEADER).get_json()
         assert cost["totalCostRub"] == pytest.approx(3.2)
 
+    def test_analyze_guard_blocks_expensive_request(self, client, monkeypatch):
+        _post(client, {"amount": 10, "comment": "coffee"})
+
+        import app.ai as ai
+
+        calls = []
+
+        def fake_post(*args, **kwargs):
+            calls.append(args)
+            raise AssertionError("model must not be called when cost guard blocks")
+
+        monkeypatch.setattr(ai.requests, "post", fake_post)
+        # Force the estimate over any threshold so a normal request is blocked.
+        from flask import current_app
+
+        with client.application.app_context():
+            current_app.config["YANDEX_AI_MAX_COST_PER_REQUEST"] = 0.0001
+
+        resp = client.post("/api/ai/analyze", headers=AUTH_HEADER)
+        assert resp.status_code == 400
+        assert "exceeding" in resp.get_json()["error"]
+        assert calls == []
+
+    def test_estimate_request_cost(self, app):
+        import app.ai as ai
+
+        with app.app_context():
+            est = ai.estimate_request_cost("system" * 100, "user" * 100, output_tokens=1000)
+        # input tokens are non-zero and output budget is included
+        assert est["input_tokens"] >= 1
+        assert est["output_tokens"] == 1000
+        assert est["cost_rub"] > 0
+
     def test_cost_requires_auth(self, client):
         resp = client.get("/api/ai/cost")
         assert resp.status_code == 401

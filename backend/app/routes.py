@@ -113,6 +113,27 @@ def analyze():
         for r in rows
     ]
 
+    month_spends = ai._month_spends(spends)
+    system, user = ai._build_prompt(month_spends)
+    limit = float(current_app.config.get("YANDEX_AI_MAX_COST_PER_REQUEST", "50"))
+    est = ai.estimate_request_cost(
+        system,
+        user,
+        output_tokens=int(current_app.config["YANDEX_AI_MODEL_MAX_TOKENS"]),
+    )
+    if est["cost_rub"] > limit:
+        return (
+            jsonify(
+                {
+                    "error": (
+                        f"AI request would cost ~{est['cost_rub']:.2f} ₽, "
+                        f"exceeding the {limit:.0f} ₽ per-request limit."
+                    )
+                }
+            ),
+            400,
+        )
+
     try:
         result = ai.analyze_spends(spends)
     except Exception as exc:  # noqa: BLE001 - surface any AI/provider error

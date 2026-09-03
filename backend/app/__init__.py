@@ -26,6 +26,10 @@ def create_app(test_config=None):
         ),
         YANDEX_AI_INPUT_PRICE_PER_1K=float(os.environ.get("YANDEX_AI_INPUT_PRICE_PER_1K", "0.8")),
         YANDEX_AI_OUTPUT_PRICE_PER_1K=float(os.environ.get("YANDEX_AI_OUTPUT_PRICE_PER_1K", "0.8")),
+        # Worst-case assumption for the estimated output token budget (matches
+        # completionOptions.maxTokens). Used only for the pre-request cost guard.
+        YANDEX_AI_MODEL_MAX_TOKENS=int(os.environ.get("YANDEX_AI_MODEL_MAX_TOKENS", "1000")),
+        YANDEX_AI_MAX_COST_PER_REQUEST=float(os.environ.get("YANDEX_AI_MAX_COST_PER_REQUEST", "50")),
     )
 
     if test_config is not None:

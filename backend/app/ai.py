@@ -187,3 +187,20 @@ def compute_cost(usage, input_price, output_price):
     return (usage["input_tokens"] / 1000.0 * input_price) + (
         usage["output_tokens"] / 1000.0 * output_price
     )
+
+
+def estimate_tokens(text):
+    # Conservative heuristic: ~4 chars per token for mixed RU/EN text.
+    # Intentionally OVER-estimates so the cost guard can never slip past.
+    return max(1, (len(text) + 3) // 4)
+
+
+def estimate_request_cost(system, user, output_tokens):
+    input_tokens = estimate_tokens(system) + estimate_tokens(user)
+    input_cost = input_tokens / 1000.0 * current_app.config["YANDEX_AI_INPUT_PRICE_PER_1K"]
+    output_cost = output_tokens / 1000.0 * current_app.config["YANDEX_AI_OUTPUT_PRICE_PER_1K"]
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cost_rub": round(input_cost + output_cost, 2),
+    }
