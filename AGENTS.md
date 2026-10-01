@@ -47,7 +47,25 @@ Managed via ExternalSecret → k8s secret `savely-secret` (source: OpenBao `secr
 | `DB_USER` | `savely` | MySQL user |
 | `DB_PASSWORD` | | MySQL password |
 | `DB_NAME` | `savely` | MySQL database |
-| `INIT_DB` | `1` | Auto-create `spends` table on startup |
+| `INIT_DB` | `1` | Auto-create tables/index on startup |
+| `YANDEX_AI_API_KEY` | | AI API key (real value lives in OpenBao) |
+| `YANDEX_AI_FOLDER_ID` | | Cloud folder id |
+| `YANDEX_AI_MODEL_URI` | `gpt://b1g22vmvppgsen3ogkj9/yandexgpt-5.1/latest` | Model URI |
+| `YANDEX_AI_INPUT_PRICE_PER_1K` | `0.8` | ₽ per 1k input tokens (cost accounting only) |
+| `YANDEX_AI_OUTPUT_PRICE_PER_1K` | `0.8` | ₽ per 1k output tokens (cost accounting only) |
+| `YANDEX_AI_MODEL_MAX_TOKENS` | `300` | Sets `maxTokens` **and** the guard's output budget |
+| `YANDEX_AI_RESPONSE_FORMAT` | `1` | Request JSON output; auto-disabled if the model rejects it |
+| `YANDEX_AI_MAX_COST_PER_REQUEST` | `50` | Pre-request guard → 400 without calling the provider |
+| `YANDEX_AI_DAILY_LIMIT` | `15` | Daily budget, **reported to the frontend only** |
+
+## AI analysis (`/api/ai/*`)
+
+- Provider is **Yandex Foundation Models** (`ai.py`, raw `requests.post`, no SDK). Model classifies the **current calendar month only** into a fixed 15-item list (`ai.CATEGORIES`); anything it invents is normalized down to `Другое`.
+- **The model never echoes spend text and never does arithmetic.** It returns indices; `_bucketize` resolves them back to rows and sums `total`/`count`/`share` on the server, so buckets always add up to the month total. Don't move arithmetic into the prompt.
+- Rows arrive **newest-first** (`ORDER BY spent_at DESC, id DESC`), so **index 0 is the most recent spend**. Prompt text omits dates for this reason (rows come back by index); amounts stay because the `notice` reasons about them.
+- Month scoping happens in SQL (`db.list_spends_month(start, end)`, bounds from `ai.month_bounds()`), **not** in Python over a full-table read. `GET /api/spends` still returns all history on purpose — don't scope it.
+- `ai._JSON_MODE` caches whether the model accepts `responseFormat`; a 400 drops it for the process. Reset it in tests.
+- Cost metrics come back in `metrics` — `uniqueComments / rows` tells you whether deduplicating identical comments would actually pay off.
 
 ## Backend code gotchas (IMPORTANT)
 
@@ -55,6 +73,7 @@ Managed via ExternalSecret → k8s secret `savely-secret` (source: OpenBao `secr
 - `init_db()` must select the correct schema for the DB type (hard-won bug: it previously used the SQLite schema against MySQL). Verify against MySQL after any schema change.
 - `create_spend`/`update_spend`/`delete_spend` take an optional `conn` (for reuse in a transaction) and only close it if they opened it.
 - Amounts come back as floats; `_serialize` (routes.py) normalizes datetime/string `spent_at` into ISO `date`.
+- **MySQL has no `CREATE INDEX IF NOT EXISTS`.** `_ensure_index` checks `information_schema` there and `ALTER TABLE`s. Index creation is wrapped in try/except in `init_db()`: a missing `ALTER` privilege must not crash startup.
 
 ## Local dev backend
 
@@ -76,7 +95,7 @@ To test against the in-cluster DB: `kubectl port-forward svc/mysql 3306:3306 -n 
 cd backend && . .venv/bin/activate && python -m pytest -q
 ```
 
-16 tests in `backend/tests/test_app.py`, all using a SQLite temp-file fixture (no live DB needed). Run before pushing backend changes; CI also runs them in the `test-back` job.
+45 tests in `backend/tests/test_app.py`, all using a SQLite temp-file fixture (no live DB needed). Run before pushing backend changes; CI also runs them in the `test-back` job.
 
 ## local dev frontend
 
@@ -130,6 +149,17 @@ Repo secrets: `DOCKER_USERNAME=incept1on`, `DOCKER_PASSWORD` (Docker Hub token),
 - **History tab**: flat list (with edit/delete) shows the current month only, with `Month · total` as a card title. Below it, one collapsible `<details>` block per month, newest first — summary shows month name + that month's total, body lists read-only spends. Native `<details>` keeps the disclosure marker, so no expand state in React.
 - **Timezone fix**: quick "Apply" sent no `date`, so the backend stored `datetime.now()` = **pod UTC**; a spend added at 00:30 local on the 1st landed in the previous month. `App.addSpend` now always sends `toLocalIso(new Date())` (or `${date}T12:00:00` for manual dates).
 - No backend/API/DB changes. Verified with `tsc --noEmit`, `eslint`, `vite build`, `pytest` (25 passed) and an SSR render check of both tabs.
+
+### AI cost + accuracy rework
+- **Problem**: one "Analyze with AI" click on a heavy month cost ~2 ₽. Cost scaled linearly with the *transaction count* in both directions — input prompt lines **and** the `indices` array the model had to emit per row.
+- **Prompt**: dates dropped (rows resolve back by index, so a date per spend was pure overhead); amounts kept because the `notice` reasons about which category dominates. `temperature` 0.1 → **0** (classification is a lookup). Output budget 1000 → 300, and `YANDEX_AI_MODEL_MAX_TOKENS` now drives **both** `completionOptions.maxTokens` and the guard estimate — they used to be two independent values.
+- **Month scoping moved to SQL**: `db.list_spends_month(start, end)` with bounds from `ai.month_bounds()`; the AI path no longer pulls the whole history table. `GET /api/spends` is untouched on purpose.
+- **Fixed 15-item taxonomy** in the system prompt with per-category examples. `normalize_category` maps anything off-list (or decorated, e.g. `Продукты/супермаркет`) onto the list, else `Другое` — this is what stops category names from jumping between months.
+- **Per-category `total`/`count`/`share` computed on the server** (`_bucketize`), never by the model. Indices the model omits or points out of range fall into `Другое` instead of vanishing, so buckets always sum to the month total. Rendered in the Spends tab as `Категория · N · сумма · доля %`.
+- **Reliability**: retries with exponential backoff on 429/5xx (a single throttled call used to surface as 502 and waste the click); `responseFormat` requested by default with automatic fallback for models that reject it.
+- **Measurement**: `/api/ai/analyze` now returns `metrics` (`rows`, `uniqueComments`, estimated/actual tokens and cost) and the Spends tab shows them. `uniqueComments / rows` decides whether grouping identical comments is worth building — the answer is data-dependent, so nothing was built pre-emptively.
+- **Rejected on purpose**: keyword rules and fuzzy clustering. Comments are slangy and written in any case; a bespoke normalizer would be brittle and buys only dedup, not accuracy.
+- Verified: `pytest` (45 passed), `tsc --noEmit`, `eslint`, `vite build`. Not yet deployed — the metrics line has to be read on real data first.
 
 ### Secrets / infra
 - OpenBao: created `secret/data/savely` (AUTH_STRING + MySQL creds), updated `siyuan-reader` ACL policy to add `secret/metadata/savely[/...]` (list/read) + `secret/data/savely[/...]` (read); k8s auth role `siyuan-role` binds the `external-secrets` SA to that policy.

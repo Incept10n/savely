@@ -103,7 +103,9 @@ def analyze():
     if not current_app.config["YANDEX_AI_API_KEY"]:
         return jsonify({"error": "AI is not configured"}), 503
 
-    rows = db.list_spends()
+    # Month-scoped read instead of pulling the whole history table.
+    start, end = ai.month_bounds()
+    rows = db.list_spends_month(start, end)
     spends = [
         {
             "date": _iso_date(r["spent_at"]),
@@ -113,14 +115,10 @@ def analyze():
         for r in rows
     ]
 
-    month_spends = ai._month_spends(spends)
-    system, user = ai._build_prompt(month_spends)
+    system, user = ai._build_prompt(spends)
     limit = float(current_app.config.get("YANDEX_AI_MAX_COST_PER_REQUEST", "50"))
-    est = ai.estimate_request_cost(
-        system,
-        user,
-        output_tokens=int(current_app.config["YANDEX_AI_MODEL_MAX_TOKENS"]),
-    )
+    max_tokens = int(current_app.config["YANDEX_AI_MODEL_MAX_TOKENS"])
+    est = ai.estimate_request_cost(system, user, output_tokens=max_tokens)
     if est["cost_rub"] > limit:
         return (
             jsonify(
@@ -146,11 +144,22 @@ def analyze():
     )
     db.record_ai_usage(result["usage"]["input_tokens"], result["usage"]["output_tokens"], cost)
 
+    grand_total = sum(float(s["amount"]) for s in spends)
     return jsonify(
         {
             "categories": result["categories"],
             "notice": result["notice"],
             "month": result["month"],
+            "metrics": {
+                "rows": len(spends),
+                "uniqueComments": ai.unique_comment_count(spends),
+                "estimatedInputTokens": est["input_tokens"],
+                "estimatedOutputTokens": est["output_tokens"],
+                "estimatedCost": est["cost_rub"],
+                "actualCost": round(cost, 4),
+                "totalRub": round(grand_total, 2),
+                "maxOutputTokens": max_tokens,
+            },
         }
     )
 

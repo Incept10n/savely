@@ -1,5 +1,4 @@
 import os
-import urllib.parse
 from datetime import datetime
 
 import pymysql
@@ -99,6 +98,28 @@ def list_spends(conn=None):
             conn.close()
 
 
+def list_spends_month(start, end, conn=None):
+    # Month-scoped read: `spent_at` is naive local time, so both bounds are
+    # local datetimes too. Avoids pulling the whole history table to filter it
+    # in Python.
+    close = conn is None
+    if conn is None:
+        conn = _connection()
+    try:
+        cur = _execute(
+            conn,
+            "SELECT id, amount, comment, spent_at FROM spends "
+            "WHERE spent_at >= ? AND spent_at < ? ORDER BY spent_at DESC, id DESC",
+            (start, end),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return [dict(r) for r in rows]
+    finally:
+        if close:
+            conn.close()
+
+
 def get_spend(spend_id, conn=None):
     close = conn is None
     if conn is None:
@@ -166,6 +187,27 @@ def delete_spend(spend_id, conn=None):
             conn.close()
 
 
+def _ensure_index(conn, table, column):
+    # SQLite understands CREATE INDEX IF NOT EXISTS, MySQL does not, so the
+    # existence is checked up front there. Indexes are pure optimization, so a
+    # failure here is logged by the caller and never blocks startup.
+    name = f"idx_{table}_{column}"
+    if _is_sqlite():
+        _execute(conn, f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({column})")
+        return
+    cur = _execute(
+        conn,
+        "SELECT 1 FROM information_schema.statistics "
+        "WHERE table_schema = ? AND table_name = ? AND index_name = ? LIMIT 1",
+        (current_app.config["DB_NAME"], table, name),
+    )
+    exists = cur.fetchone() is not None
+    cur.close()
+    if exists:
+        return
+    _execute(conn, f"ALTER TABLE {table} ADD INDEX {name} ({column})")
+
+
 def init_db():
     conn = _connection()
     try:
@@ -174,6 +216,13 @@ def init_db():
             conn,
             MYSQL_AI_USAGE_SCHEMA if not _is_sqlite() else AI_USAGE_SCHEMA,
         )
+        try:
+            _ensure_index(conn, "spends", "spent_at")
+        except Exception:  # noqa: BLE001 - missing ALTER privileges must not crash the app
+            conn.rollback()
+            current_app.logger.warning(
+                "could not ensure index on spends(spent_at)", exc_info=True
+            )
         conn.commit()
     finally:
         conn.close()
@@ -228,12 +277,3 @@ def get_ai_cost_since(since_dt, conn=None):
     finally:
         if close:
             conn.close()
-
-
-def _build_database_url():
-    user = urllib.parse.quote(current_app.config["DB_USER"])
-    password = urllib.parse.quote(current_app.config["DB_PASSWORD"])
-    host = current_app.config["DB_HOST"]
-    port = current_app.config["DB_PORT"]
-    name = current_app.config["DB_NAME"]
-    return f"mysql+pymysql://{user}:{password}@{host}:{port}/{name}"

@@ -110,7 +110,12 @@ export default function SpendsTab({ spends, onAdd }: Props) {
           <div className="ai-month">Analysis covers {analysis.month} only</div>
           {analysis.categories.map((cat) => (
             <div className="ai-category" key={cat.name}>
-              <div className="ai-category-name">{cat.name}</div>
+              <div className="ai-category-head">
+                <span className="ai-category-name">{cat.name}</span>
+                <span className="ai-category-stats">
+                  {cat.count} · {cat.total.toFixed(2)} ₽ · {cat.share.toFixed(1)}%
+                </span>
+              </div>
               <ul className="ai-spends">
                 {cat.spends.map((s, i) => (
                   <li key={i} className="ai-spend">
@@ -123,6 +128,12 @@ export default function SpendsTab({ spends, onAdd }: Props) {
               </ul>
             </div>
           ))}
+          <div className="ai-metrics">
+            {analysis.metrics.rows} spends · {analysis.metrics.uniqueComments} unique comments ·{' '}
+            {analysis.metrics.estimatedInputTokens}+{analysis.metrics.maxOutputTokens} tokens ·
+            est {analysis.metrics.estimatedCost.toFixed(2)} ₽ · actual{' '}
+            {analysis.metrics.actualCost.toFixed(2)} ₽
+          </div>
         </div>
       )}
 

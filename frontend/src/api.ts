@@ -89,13 +89,28 @@ export function deleteSpend(id: number) {
 
 export interface AiCategory {
   name: string
+  total: number
+  count: number
+  share: number
   spends: { date: string; amount: number; comment: string }[]
+}
+
+export interface AiMetrics {
+  rows: number
+  uniqueComments: number
+  estimatedInputTokens: number
+  estimatedOutputTokens: number
+  estimatedCost: number
+  actualCost: number
+  totalRub: number
+  maxOutputTokens: number
 }
 
 export interface AiAnalysis {
   categories: AiCategory[]
   notice: string
   month: string
+  metrics: AiMetrics
 }
 
 export function analyzeSpends() {

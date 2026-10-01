@@ -362,11 +362,24 @@ body {
   margin-bottom: 16px;
 }
 
+.ai-category-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
 .ai-category-name {
   font-weight: 600;
   font-size: 15px;
-  margin-bottom: 6px;
   color: var(--text);
+}
+
+.ai-category-stats {
+  font-size: 13px;
+  color: var(--text-faint);
+  white-space: nowrap;
 }
 
 .ai-spends {
@@ -386,5 +399,12 @@ body {
 .ai-amount {
   font-weight: 600;
   white-space: nowrap;
+}
+
+.ai-metrics {
+  font-size: 12px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--row-border);
+  padding-top: 8px;
 }
 

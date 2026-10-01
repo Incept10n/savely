@@ -18,7 +18,7 @@ frontend/  React SPA + nginx.conf + Dockerfile
 
 ## Backend API
 
-Base path `/api` (except health). All `/api/spends` and `/api/auth/verify` require `X-Auth-String`.
+Base path `/api` (except health). All `/api/spends`, `/api/ai/*` and `/api/auth/verify` require `X-Auth-String`.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -28,8 +28,24 @@ Base path `/api` (except health). All `/api/spends` and `/api/auth/verify` requi
 | POST | `/api/spends` | Add spend `{amount, comment?, date?}` — `date` defaults to now |
 | PUT | `/api/spends/:id` | Update `{amount, comment?, date?}` |
 | DELETE | `/api/spends/:id` | Delete |
+| POST | `/api/ai/analyze` | Categorize the current month's spends (YandexGPT) |
+| GET | `/api/ai/cost` | AI spend: total, `?since=<epoch ms>` for a window, daily limit |
 
 A spend row: `amount` (number), `comment` (string), `date` (ISO datetime).
+
+### `/api/ai/analyze`
+
+Sends the current month's spends to YandexGPT, which assigns each one to a
+category from a fixed 15-item list (`ai.CATEGORIES`) by index. The model never
+echoes spend text and never does arithmetic — `total`, `count` and `share` are
+summed on the server from the returned indices, so the buckets always add up to
+the month total. Indices the model omits or points out of range land in
+`Другое` rather than disappearing.
+
+Response: `{categories: [{name, total, count, share, spends}], notice, month, metrics}`.
+`metrics` reports `rows`, `uniqueComments`, estimated/actual tokens and cost —
+use `uniqueComments / rows` to judge whether deduplicating identical comments
+would pay off.
 
 ## Backend env vars
 
@@ -43,7 +59,16 @@ A spend row: `amount` (number), `comment` (string), `date` (ISO datetime).
 | `DB_USER` | `savely` | MySQL user |
 | `DB_PASSWORD` | | MySQL password |
 | `DB_NAME` | `savely` | MySQL database |
-| `INIT_DB` | `1` | Auto-create table on startup |
+| `INIT_DB` | `1` | Auto-create tables/index on startup |
+| `YANDEX_AI_API_KEY` | | API key (in OpenBao, not in git) |
+| `YANDEX_AI_FOLDER_ID` | | Cloud folder id |
+| `YANDEX_AI_MODEL_URI` | `gpt://b1g22vmvppgsen3ogkj9/yandexgpt-5.1/latest` | Model URI |
+| `YANDEX_AI_INPUT_PRICE_PER_1K` | `0.8` | ₽ per 1k input tokens (cost accounting) |
+| `YANDEX_AI_OUTPUT_PRICE_PER_1K` | `0.8` | ₽ per 1k output tokens (cost accounting) |
+| `YANDEX_AI_MODEL_MAX_TOKENS` | `300` | `maxTokens` **and** the guard's output budget |
+| `YANDEX_AI_RESPONSE_FORMAT` | `1` | Ask for JSON output; auto-disabled if the model rejects it |
+| `YANDEX_AI_MAX_COST_PER_REQUEST` | `50` | Pre-request guard, returns 400 without calling the provider |
+| `YANDEX_AI_DAILY_LIMIT` | `15` | Daily budget, reported to the frontend (enforced client-side only) |
 
 ## Local dev
 
