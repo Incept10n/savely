@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Spend } from './api'
+import { currentMonthKey, groupByMonth, monthKeyOf, monthLabel } from './months'
 
 interface Props {
   spends: Spend[]
@@ -26,6 +27,10 @@ export default function HistoryTab({ spends, onAdd, onUpdate, onDelete }: Props)
   const [editComment, setEditComment] = useState('')
   const [editDate, setEditDate] = useState('')
   const [error, setError] = useState('')
+
+  const monthKey = currentMonthKey()
+  const monthSpends = spends.filter((s) => monthKeyOf(s.date) === monthKey)
+  const months = groupByMonth(spends)
 
   function startAdd() {
     setEditing(-1)
@@ -135,9 +140,14 @@ export default function HistoryTab({ spends, onAdd, onUpdate, onDelete }: Props)
       </div>
 
       <div className="card">
+        <div className="card-title">
+          {monthLabel(monthKey)} · {monthSpends.reduce((sum, s) => sum + s.amount, 0).toFixed(2)} ₽
+        </div>
         <ul className="spend-list">
-          {spends.length === 0 && <li style={{ color: '#7b8794' }}>No spends yet.</li>}
-          {spends.map((s) =>
+          {monthSpends.length === 0 && (
+            <li className="empty-note">No spends yet.</li>
+          )}
+          {monthSpends.map((s) =>
             editing === s.id ? (
               <li key={s.id}>
                 <form onSubmit={submitEdit}>
@@ -205,6 +215,32 @@ export default function HistoryTab({ spends, onAdd, onUpdate, onDelete }: Props)
           )}
         </ul>
       </div>
+
+      {months.length > 0 && (
+        <div className="card">
+          <div className="card-title">By month</div>
+          {months.map((month) => (
+            <details className="month-block" key={month.key}>
+              <summary className="month-summary">
+                <span className="month-summary-row">
+                  <span>{month.label}</span>
+                  <span className="month-total">{month.total.toFixed(2)} ₽</span>
+                </span>
+              </summary>
+              <ul className="month-spends">
+                {month.spends.map((s) => (
+                  <li key={s.id} className="month-spend">
+                    <span className="month-spend-label">
+                      {toLocalInput(s.date)} · {s.comment || '—'}
+                    </span>
+                    <span className="month-spend-amount">{s.amount.toFixed(2)} ₽</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

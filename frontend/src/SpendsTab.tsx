@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { analyzeSpends, getAiCost, type AiAnalysis, type Spend } from './api'
+import { currentMonthKey, monthKeyOf, monthLabel } from './months'
 
 interface Props {
   spends: Spend[]
@@ -71,14 +72,17 @@ export default function SpendsTab({ spends, onAdd }: Props) {
     }
   }
 
-  const total = spends.reduce((sum, s) => sum + s.amount, 0)
-  const uniqueDays = new Set(spends.map((s) => s.date.slice(0, 10))).size
+  const monthKey = currentMonthKey()
+  const monthSpends = spends.filter((s) => monthKeyOf(s.date) === monthKey)
+  const total = monthSpends.reduce((sum, s) => sum + s.amount, 0)
+  const uniqueDays = new Set(monthSpends.map((s) => s.date.slice(0, 10))).size
   const dailyAvg = uniqueDays > 0 ? total / uniqueDays : 0
 
   const aiBlocked = aiTodayCost > aiDailyLimit
 
   return (
     <div className="summary-card">
+      <div className="summary-month">{monthLabel(monthKey)}</div>
       <div className="summary-total">{total.toFixed(2)} ₽</div>
       {uniqueDays > 0 && (
         <div className="summary-avg">≈ {dailyAvg.toFixed(2)} ₽ / day</div>
@@ -87,7 +91,7 @@ export default function SpendsTab({ spends, onAdd }: Props) {
       <button
         className="btn btn-ai"
         onClick={handleAnalyze}
-        disabled={aiLoading || spends.length === 0 || aiBlocked}
+        disabled={aiLoading || monthSpends.length === 0 || aiBlocked}
         title={aiBlocked ? 'AI is disabled for today (daily cost limit reached)' : undefined}
       >
         {aiLoading ? 'Analyzing…' : 'Analyze with AI'}

@@ -123,6 +123,14 @@ Repo secrets: `DOCKER_USERNAME=incept1on`, `DOCKER_PASSWORD` (Docker Hub token),
 ### Currency
 - Changed amount display from `$` to **rubles**: `HistoryTab.tsx` now renders `{s.amount.toFixed(2)} ₽`; input labels in `SpendsTab.tsx` and `HistoryTab.tsx` are now `Amount, ₽`. Pushed; front CI passed; `₽` confirmed in the served JS bundle at https://savely.inceptech.ru/.
 
+### Monthly totals (the total never reset)
+- **Root cause**: there was no month scoping anywhere. `GET /api/spends` returns the whole table and `SpendsTab` summed all of it, so the total grew forever. Only the AI path was month-scoped (`ai._month_spends`, `%Y-%m` prefix).
+- New `frontend/src/months.ts`: `monthKeyOf` (`YYYY-MM` by **local** time — backend sends naive ISO, which browsers parse as local), `currentMonthKey`, `monthLabel` (`en-US`, "October 2026"), `groupByMonth` (sorted desc), `toLocalIso` (local wall time, no offset).
+- **Spends tab**: total + `≈ ₽/day` now count the current month only, with the month label above the sum. AI button gates on current-month spends.
+- **History tab**: flat list (with edit/delete) shows the current month only, with `Month · total` as a card title. Below it, one collapsible `<details>` block per month, newest first — summary shows month name + that month's total, body lists read-only spends. Native `<details>` keeps the disclosure marker, so no expand state in React.
+- **Timezone fix**: quick "Apply" sent no `date`, so the backend stored `datetime.now()` = **pod UTC**; a spend added at 00:30 local on the 1st landed in the previous month. `App.addSpend` now always sends `toLocalIso(new Date())` (or `${date}T12:00:00` for manual dates).
+- No backend/API/DB changes. Verified with `tsc --noEmit`, `eslint`, `vite build`, `pytest` (25 passed) and an SSR render check of both tabs.
+
 ### Secrets / infra
 - OpenBao: created `secret/data/savely` (AUTH_STRING + MySQL creds), updated `siyuan-reader` ACL policy to add `secret/metadata/savely[/...]` (list/read) + `secret/data/savely[/...]` (read); k8s auth role `siyuan-role` binds the `external-secrets` SA to that policy.
 - Velero: created schedule `savely-daily-backup`.

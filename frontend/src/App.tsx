@@ -13,6 +13,7 @@ import {
   UnauthorizedError,
   type Spend,
 } from './api.ts'
+import { toLocalIso } from './months.ts'
 
 type Tab = 'spends' | 'history'
 
@@ -76,7 +77,12 @@ export default function App() {
   }
 
   async function addSpend(amount: number, comment: string, date?: string) {
-    await createSpend({ amount, comment, ...(date ? { date: `${date}T12:00:00` } : {}) })
+    // Explicit dates are entered as local wall time; quick adds send the
+    // browser's local time too, so a spend added just after midnight isn't
+    // stored with the server's UTC timestamp (which would land in the previous
+    // month).
+    const spentAt = date ? `${date}T12:00:00` : toLocalIso(new Date())
+    await createSpend({ amount, comment, date: spentAt })
     load()
   }
 
