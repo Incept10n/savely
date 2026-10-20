@@ -1,8 +1,8 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class UserRequest(BaseModel):
-    word: str
+    word: str = Field(min_length=1, description="Слово не должно быть пустым")
 
 
 class PredictResponse(BaseModel):
