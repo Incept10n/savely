@@ -1,6 +1,5 @@
 import os
 import torch
-import pandas as pd
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from transformers import AutoTokenizer, AutoModel
@@ -33,29 +32,26 @@ def get_embedding(text, model, tokenizer):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 1. Инициализируем модель для инференса запросов
     model_name = "intfloat/multilingual-e5-small"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModel.from_pretrained(model_name)
 
-    csv_path = "savely_spends.csv"
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError("Problem with filepath. No file found")
+    # 2. Загружаем уже готовую векторную базу вместо CSV
+    db_path = "vector_db.pt"
+    if not os.path.exists(db_path):
+        raise FileNotFoundError(
+            "Векторная база данных 'vector_db.pt' не найдена. "
+            "Запустите сначала скрипт компиляции базы на локальной машине."
+        )
 
-    df = pd.read_csv(csv_path, sep=None, engine="python", on_bad_lines="skip")
-    df.columns = df.columns.str.strip()
-
-    df["comment"] = df["comment"].astype(str).str.strip().str.lower()
-    df["category"] = df["category"].astype(str).str.strip()
-    df = df.dropna(subset=["comment", "category"])
-    dataset_embeddings = torch.cat(
-        [get_embedding(f"passage: {text}", model, tokenizer) for text in df["comment"]]
-    )
+    # Загружаем сохраненный словарь тензоров и списков
+    db_data = torch.load(db_path, weights_only=False)
 
     ml_models["tokenizer"] = tokenizer
     ml_models["model"] = model
-    ml_models["dataset_embeddings"] = dataset_embeddings
-    ml_models["dataset_labels"] = df["category"].tolist()
-    ml_models["dataset_texts"] = df["comment"].tolist()
+    ml_models["dataset_embeddings"] = db_data["dataset_embeddings"]
+    ml_models["dataset_labels"] = db_data["dataset_labels"]
     yield
     ml_models.clear()
 
