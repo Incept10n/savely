@@ -1,0 +1,47 @@
+services:
+  mlflow_server:
+    image: ghcr.io/mlflow/mlflow:v2.19.0  
+    container_name: mlflow_server
+    ports:
+      - "5000:5000"  
+    networks:
+      - ml_network
+    volumes:
+      - mlflow_data:/mlflow_store  
+    command: >
+      mlflow server 
+      --backend-store-uri sqlite:////mlflow_store/mlflow.db 
+      --default-artifact-root /mlflow_store/artifacts 
+      --host 0.0.0.0 
+      --port 5000
+    restart: unless-stopped
+
+  knn_service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: knn_predict_service
+    ports:
+      - "8000:8000"  
+    networks:
+      - ml_network
+    depends_on:
+      - mlflow_server  
+    environment:
+      - S3_BUCKET=your-actual-s3-bucket-name
+      - S3_CSV_KEY=savely_spends.csv
+      - AWS_ACCESS_KEY_ID=your_aws_access_key_id
+      - AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+      - AWS_DEFAULT_REGION=ru-central1  
+      
+      # Настройки MLflow и модели
+      - MODEL_NAME=intfloat/multilingual-e5-small
+      - MLFLOW_TRACKING_URI=http://mlflow_server:5000
+    restart: unless-stopped
+
+volumes:
+  mlflow_data:  
+
+networks:
+  ml_network:   
+    driver: bridge
