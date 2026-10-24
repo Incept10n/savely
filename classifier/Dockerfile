@@ -1,4 +1,6 @@
-FROM astral-sh/uv:0.5-python3.10-alpine AS builder
+FROM python:3.11-slim AS builder
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
@@ -7,9 +9,9 @@ ENV UV_LINK_MODE=copy \
 
 COPY pyproject.toml uv.lock ./
 
-RUN uv sync --frozen --no-install-project --no-dev
+RUN uv sync --frozen --no-install-project --no-dev --no-cache
 
-FROM python:3.10-alpine
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -22,4 +24,5 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 EXPOSE 8000
 
-CMD ["uvicorn", "knn:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/app/.venv/bin/python", "-m", "uvicorn", "knn:app", "--host", "0.0.0.0", "--port", "8000"]
+
