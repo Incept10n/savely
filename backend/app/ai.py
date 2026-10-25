@@ -5,6 +5,8 @@ from datetime import datetime
 import requests
 from flask import current_app
 
+from .categories import CATEGORIES, FALLBACK_CATEGORY, normalize_category
+
 ENDPOINT = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 
 _TIMEOUT = 120
@@ -12,27 +14,15 @@ _MAX_ATTEMPTS = 3
 _BACKOFF_BASE = 1.0
 _RETRYABLE_STATUS = (429, 500, 502, 503, 504)
 
-# Closed category list. The model must not invent names: a fixed vocabulary is
-# what keeps categories stable from month to month.
-CATEGORIES = [
-    "Продукты",
-    "Кафе и рестораны",
-    "Транспорт и такси",
-    "Авто и заправки",
-    "Коммуналка",
-    "Связь и интернет",
-    "Здоровье и аптека",
-    "Одежда и обувь",
-    "Товары для дома",
-    "Электроника",
-    "Развлечения и подписки",
-    "Спорт и отдых",
-    "Образование",
-    "Путешествия",
-    "Другое",
+# The taxonomy and its normalizer live in categories.py: the classifier path
+# and this legacy LLM path must agree on exactly one closed list.
+__all__ = [
+    "CATEGORIES",
+    "FALLBACK_CATEGORY",
+    "normalize_category",
+    "analyze_spends",
+    "month_bounds",
 ]
-FALLBACK_CATEGORY = "Другое"
-_ALLOWED_CATEGORIES = {name.casefold(): name for name in CATEGORIES}
 
 # None = untested, True = provider accepted responseFormat, False = rejected.
 _JSON_MODE = None
@@ -57,19 +47,6 @@ def normalize_comment(comment):
 
 def unique_comment_count(spends):
     return len({normalize_comment(s.get("comment")) for s in spends})
-
-
-def normalize_category(name):
-    text = (name or "").strip().casefold()
-    if not text:
-        return FALLBACK_CATEGORY
-    if text in _ALLOWED_CATEGORIES:
-        return _ALLOWED_CATEGORIES[text]
-    # Tolerate decorated names like "Продукты / супермаркет".
-    matches = [name for key, name in _ALLOWED_CATEGORIES.items() if key in text]
-    if matches:
-        return max(matches, key=len)
-    return FALLBACK_CATEGORY
 
 
 def _build_prompt(spends):

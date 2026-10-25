@@ -322,83 +322,8 @@ body {
   cursor: not-allowed;
 }
 
-.ai-blocked {
-  margin-top: 12px;
-  font-size: 13px;
-  color: var(--danger, #e5484d);
-}
-
-.ai-cost {
-  font-size: 13px;
-  color: var(--text-faint);
-  margin-top: 12px;
-  margin-bottom: 16px;
-}
-
 .ai-error {
   margin-top: 12px;
-}
-
-.ai-result {
-  text-align: left;
-  margin-top: 16px;
-  border-top: 1px solid var(--border);
-  padding-top: 16px;
-}
-
-.ai-notice {
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-
-.ai-month {
-  font-size: 13px;
-  color: var(--text-faint);
-  margin-bottom: 16px;
-}
-
-.ai-category {
-  margin-bottom: 16px;
-}
-
-.ai-category-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 6px;
-}
-
-.ai-category-name {
-  font-weight: 600;
-  font-size: 15px;
-  color: var(--text);
-}
-
-.ai-category-stats {
-  font-size: 13px;
-  color: var(--text-faint);
-  white-space: nowrap;
-}
-
-.ai-spends {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.ai-spend {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 4px 0;
-  font-size: 14px;
-}
-
-.ai-amount {
-  font-weight: 600;
-  white-space: nowrap;
 }
 
 .ai-metrics {
@@ -406,5 +331,177 @@ body {
   color: var(--text-faint);
   border-top: 1px solid var(--row-border);
   padding-top: 8px;
+  margin-top: 12px;
+}
+
+/* --- category report ---------------------------------------------------- */
+
+.stats-card {
+  text-align: left;
+}
+
+.stats-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stats-month {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.stats-summary {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+.stats-warn {
+  font-size: 13px;
+  color: var(--danger, #e5484d);
+  border: 1px solid var(--danger, #e5484d);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+}
+
+.cat-row {
+  margin-bottom: 14px;
+}
+
+.cat-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cat-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.cat-amount {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.cat-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--ghost);
+  overflow: hidden;
+  margin: 6px 0 4px;
+}
+
+.cat-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.cat-meta {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.cat-spends {
+  margin-top: 4px;
+}
+
+.cat-spends > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.cat-spends > summary:hover {
+  color: var(--accent);
+}
+
+.cat-spends ul {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+}
+
+.cat-spend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--row-border);
+}
+
+.cat-spend:last-child {
+  border-bottom: none;
+}
+
+.cat-spend-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cat-spend-date {
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.cat-spend-comment {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cat-spend-source {
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--danger, #e5484d);
+  border: 1px solid var(--danger, #e5484d);
+  border-radius: 4px;
+  padding: 1px 4px;
+  white-space: nowrap;
+}
+
+.cat-spend-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.cat-spend-amount {
+  font-weight: 600;
+}
+
+.cat-fix {
+  font-size: 12px;
+  padding: 2px 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--card);
+  color: var(--text-muted);
+  max-width: 130px;
 }
 

@@ -30,6 +30,9 @@ Base path `/api`. Routes in `backend/app/routes.py`; DB layer in `backend/app/db
 | POST | `/api/spends` | Add spend `{amount, comment?, date?}` — `date` defaults to now |
 | PUT | `/api/spends/:id` | Update `{amount, comment?, date?}` |
 | DELETE | `/api/spends/:id` | Delete |
+| PATCH | `/api/spends/:id/category` | Manual category override `{category}` (validated against the taxonomy) |
+| GET | `/api/stats?month=YYYY-MM&refresh=1` | Category report (defaults to the current month) |
+| POST | `/api/stats/backfill?limit=N` | Classify history rows that have no stored category |
 
 A spend row: `id` (int), `amount` (float), `comment` (string), `date` (ISO datetime `YYYY-MM-DDTHH:MM:SS`).
 
@@ -57,6 +60,25 @@ Managed via ExternalSecret → k8s secret `savely-secret` (source: OpenBao `secr
 | `YANDEX_AI_RESPONSE_FORMAT` | `1` | Request JSON output; auto-disabled if the model rejects it |
 | `YANDEX_AI_MAX_COST_PER_REQUEST` | `50` | Pre-request guard → 400 without calling the provider |
 | `YANDEX_AI_DAILY_LIMIT` | `15` | Daily budget, **reported to the frontend only** |
+| `CATEGORIES_BACKEND` | `knn` | `knn` (local classifier) or `llm` (legacy YandexGPT path) |
+| `CLASSIFIER_URL` | *(empty)* | Classifier base URL, e.g. `http://classifier:8000`. Empty = classification off |
+| `CLASSIFIER_TIMEOUT` | `3` | Per-request timeout, seconds |
+| `CLASSIFIER_MAX_RETRIES` | `1` | Retries in the report/backfill path (write path uses 0) |
+| `CLASSIFIER_CONCURRENCY` | `8` | Parallel `/predict` calls |
+| `CLASSIFIER_COSINE_FLOOR` | `0.80` | Below this cosine the label is replaced by «Другое» |
+| `CLASSIFIER_REVIEW_COSINE` | `0.86` | Below this the spend is flagged "confirm" in the UI |
+
+## Category classification (`classifier/` service + `/api/stats`)
+
+- The report is served from **categories stored in the DB** (`spend_categories` table), not recomputed per click. A click is a cheap read plus, at most, classification of rows that have no label yet.
+- `classifier/knn.py` is an external service and is **not modified by this repo**: `POST /predict {word}` → `{category, confidence}`. It has no batch endpoint and no health check, and it answers 503 until its vector base is loaded — `app/classifier.py` wraps all of that (dedupe by unique comment, one probe request, then a bounded thread pool, `None` on failure).
+- **The service's own 0.40 similarity cut-off is meaningless** for e5 embeddings (unrelated Russian phrases already score ~0.7). The decision is taken in `app/categories.py`: `confidence` is inverted back to a cosine (`cos = conf/100*2 - 1`) and compared with `CLASSIFIER_COSINE_FLOOR`. The service's label is also folded onto the closed 15-item taxonomy (`normalize_category`), so a dataset label the app does not know becomes «Другое».
+- **All arithmetic is server-side** (`categories.aggregate`): `total`, `count`, `share`, `avg`. Buckets always add up to the month total; a row with no label still appears under «Другое» with `source: "none"`.
+- `summary` replaces the old LLM `notice` and is deterministic (`categories.build_summary`) — free, instant, stable for the same month.
+- `source` on a spend: `knn` (from the service), `manual` (user override, **never** overwritten by refresh or backfill), `fallback` (empty comment), `none` (not classified yet).
+- Classification on the write path is best-effort: one attempt, no retries, exceptions swallowed. Saving a spend must never fail because the classifier is down; such rows stay unlabelled and are picked up by `/api/stats/backfill` or the next `?refresh=1`.
+- `spend_categories` is a **separate table on purpose**: `init_db()` only runs `CREATE TABLE IF NOT EXISTS`, so extra columns on `spends` would need an `ALTER` migration on the live MySQL instance; a new table needs none. Deleting a spend removes its row in the same transaction (no FK cascade — SQLite would need `PRAGMA foreign_keys`).
+- The legacy Yandex path still exists (`CATEGORIES_BACKEND=llm`, `/api/ai/cost`, `ai_usage`) and `POST /api/ai/analyze` answers **in the old shape from the classifier** when the flag is `knn`. Keep the `ai.py` tests pinned to `CATEGORIES_BACKEND=llm`; the fixture sets it.
 
 ## AI analysis (`/api/ai/*`)
 
@@ -95,7 +117,7 @@ To test against the in-cluster DB: `kubectl port-forward svc/mysql 3306:3306 -n 
 cd backend && . .venv/bin/activate && python -m pytest -q
 ```
 
-45 tests in `backend/tests/test_app.py`, all using a SQLite temp-file fixture (no live DB needed). Run before pushing backend changes; CI also runs them in the `test-back` job.
+69 tests in `backend/tests/test_app.py`, all using a SQLite temp-file fixture (no live DB needed). Run before pushing backend changes; CI also runs them in the `test-back` job.
 
 ## local dev frontend
 
@@ -108,6 +130,7 @@ cd frontend && npm install && npm run dev   # dev server proxies /api to localho
 GitHub Actions on push to `master`, **path-filtered**:
 - `cicd-back.yml` (`backend/**`): job `test-back` (pytest) → `Deploy back` (build+push `incept1on/savely:back` → `kubectl rollout restart deployment backend -n savely`).
 - `cicd-front.yml` (`frontend/**`): build+push `incept1on/savely:front` → `kubectl rollout restart deployment frontend -n savely`.
+- `cicd-classifier.yml` (`classifier/**`): build+push `incept1on/savely:classifier` from `./classifier` → `kubectl rollout restart deployment classifier -n savely`. The classifier image is large (PyPI `torch` pulls the CUDA stack); see the infra notes below.
 
 Repo secrets: `DOCKER_USERNAME=incept1on`, `DOCKER_PASSWORD` (Docker Hub token), `KUBE_CONFIG` (base64 kubeconfig). The `kubectl` calls use `tale/kubectl-action@v1`.
 
@@ -173,3 +196,14 @@ Repo secrets: `DOCKER_USERNAME=incept1on`, `DOCKER_PASSWORD` (Docker Hub token),
   - `/api/health` → `{"status":"ok"}`
   - `/api/spends` without auth → 401; with `X-Auth-String` → CRUD all work (POST 201, GET list, PUT, DELETE 204, DELETE-missing 404, date preserved).
   - Front CI's first run "failed" only because the `savely` namespace didn't exist yet (timing); harmless — later runs pass.
+### Category report on the local classifier (replaces the LLM on the button)
+
+- **Goal**: "Analyze with AI" must show per-category spending stats from the `classifier/` service instead of paying YandexGPT (~2 ₽ per heavy month, non-deterministic, recomputed on every click).
+- **Storage first**: new `spend_categories` table (`spend_id` PK, `category`, `confidence`, `cosine`, `source`, `classifier_rev`, `updated_at`) in both SQLite and MySQL flavours. No `ALTER TABLE spends` → no migration on the live DB.
+- **`app/classifier.py`**: client for `POST /predict`. Dedupes by normalized comment, probes once before fanning out (a dead service costs one connection attempt, not hundreds), bounded `ThreadPoolExecutor`, `None` instead of exceptions.
+- **`app/categories.py`**: owns the 15-item taxonomy (moved out of `ai.py`, which now imports it), inverts the service's `((cos+1)/2)*100` back to a cosine, applies `CLASSIFIER_COSINE_FLOOR`, aggregates buckets, and builds a deterministic `summary` in place of the LLM `notice`.
+- **Write path**: `create_spend`/`update_spend` classify with one attempt (no retries) and swallow failures — a classifier outage must never break saving. `manual` overrides are never re-labelled.
+- **API**: `GET /api/stats?month=&refresh=1`, `POST /api/stats/backfill`, `PATCH /api/spends/:id/category`. `POST /api/ai/analyze` now answers in the old shape from the classifier unless `CATEGORIES_BACKEND=llm`.
+- **Frontend**: `CategoryStats.tsx` (month selector, bars, per-category `<details>`, "confirm" badge + inline category fix), `SpendsTab` lost the cost gate/`ai_usage` line, `api.ts` lost the cost types.
+- Tests: 69 (was 45), including classifier-down, low-cosine, off-list label, manual-override-survives-refresh, dedupe and month scoping. The LLM tests are pinned to `CATEGORIES_BACKEND=llm` in the fixture.
+- **Not yet deployed**: the `classifier` + `mlflow` pods and the S3 dataset live in `~/devops/inceptech` (uncommitted at the time of writing). No classifier pod = `CLASSIFIER_URL` empty = every spend lands in «Другое», no errors.
