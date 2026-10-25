@@ -446,3 +446,30 @@ def list_spends_without_category(limit=2000, conn=None):
         if close:
             conn.close()
 
+
+
+def list_manual_labels(conn=None):
+    """Every spend whose category a human confirmed (`source='manual'`).
+
+    This is the training set for the weekly dataset export: only labels the
+    user picked are exported, never the classifier's own output — training on
+    that just reinforces its mistakes. Empty comments are skipped: they carry
+    no text to embed.
+    """
+    close = conn is None
+    if conn is None:
+        conn = _connection()
+    try:
+        cur = _execute(
+            conn,
+            "SELECT s.id, s.amount, s.comment, s.spent_at, c.category "
+            "FROM spends s JOIN spend_categories c ON c.spend_id = s.id "
+            "WHERE c.source = 'manual' AND TRIM(s.comment) <> '' "
+            "ORDER BY s.spent_at ASC, s.id ASC",
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return [dict(r) for r in rows]
+    finally:
+        if close:
+            conn.close()

@@ -117,7 +117,7 @@ To test against the in-cluster DB: `kubectl port-forward svc/mysql 3306:3306 -n 
 cd backend && . .venv/bin/activate && python -m pytest -q
 ```
 
-74 tests in `backend/tests/test_app.py`, all using a SQLite temp-file fixture (no live DB needed). Run before pushing backend changes; CI also runs them in the `test-back` job.
+84 tests in `backend/tests/test_app.py`, all using a SQLite temp-file fixture (no live DB needed). Run before pushing backend changes; CI also runs them in the `test-back` job.
 
 ## local dev frontend
 
@@ -127,12 +127,21 @@ cd frontend && npm install && npm run dev   # dev server proxies /api to localho
 
 ## CI/CD
 
-GitHub Actions on push to `master`, **path-filtered**:
-- `cicd-back.yml` (`backend/**`): job `test-back` (pytest) → `Deploy back` (build+push `incept1on/savely:back` → `kubectl rollout restart deployment backend -n savely`).
-- `cicd-front.yml` (`frontend/**`): build+push `incept1on/savely:front` → `kubectl rollout restart deployment frontend -n savely`.
-- `cicd-classifier.yml` (`classifier/**`): build+push `incept1on/savely:classifier` from `./classifier` → `kubectl rollout restart deployment classifier -n savely`. The classifier image is large (PyPI `torch` pulls the CUDA stack); see the infra notes below.
+GitHub Actions on push to `master`, **path-filtered**. **CI only — no CD**: nothing in this repo touches the cluster.
 
-Repo secrets: `DOCKER_USERNAME=incept1on`, `DOCKER_PASSWORD` (Docker Hub token), `KUBE_CONFIG` (base64 kubeconfig). The `kubectl` calls use `tale/kubectl-action@v1`.
+- `ci-back.yml` (`backend/**`): job `test-back` (pytest) → build+push `incept1on/savely:back`.
+- `ci-front.yml` (`frontend/**`): build+push `incept1on/savely:front`.
+- `ci-classifier.yml` (`classifier/**`): build+push `incept1on/savely:classifier` from `./classifier`. The image is large (PyPI `torch` pulls the CUDA stack), so this job is slow.
+
+Repo secrets: `DOCKER_USERNAME=incept1on`, `DOCKER_PASSWORD` (Docker Hub token). `KUBE_CONFIG` is no longer used by any workflow.
+
+**A pushed image does not deploy itself.** All three tags are mutable (`:back`, `:front`, `:classifier`) and the Deployments use `imagePullPolicy: Always`, so the new image is picked up the next time a pod starts. Trigger that by hand:
+
+```bash
+kubectl rollout restart deployment backend -n savely
+kubectl rollout restart deployment frontend -n savely
+kubectl rollout restart deployment classifier -n savely
+```
 
 > Note: on the **very first** frontend push the `savely` namespace didn't exist yet, so the rollout step failed with `namespaces "savely" not found` — harmless (ArgoCD hadn't created it yet; the image was still pushed). Namespace now exists, so this won't recur.
 
@@ -142,7 +151,7 @@ Repo secrets: `DOCKER_USERNAME=incept1on`, `DOCKER_PASSWORD` (Docker Hub token),
 - Resources: `Namespace savely`; `backend` Deployment (2 replicas, svc `backend:5000`); `frontend` Deployment (2 replicas, svc `frontend:80`); `mysql` StatefulSet (1 replica, svc `mysql:3306`, PVC `mysql-data`); `ExternalSecret savely-secret` (SourceReady → `SecretSynced`).
 - **Secrets** come from OpenBao (`secret/data/savely`: `AUTH_STRING`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_HOST`, `DB_PORT`) via the `openbao-conf` SecretStore; role `siyuan-role`/policy `siyuan-reader`. Do NOT commit secrets.
 - **Edge TLS**: nginx load-balancer (`apps/nginx-load-balancer/`) terminates TLS; cert-manager `regru-dns` ClusterIssuer issued `savely-server-tls` in `nginx-load-balancer` ns, mounted at `/etc/nginx/certs/savely`. Config in `nginx-inceptech-loadblalancer/conf.d/savely-nginx.conf`: `/api/` → `backend.savely.svc.cluster.local:5000/api/`, `/` → `frontend.savely.svc.cluster.local:80`.
-- **Backups**: Velero schedule `savely-daily-backup` (daily `0 3 * * *`, TTL 168h, fs-backup) for the `savely` namespace.
+- **Backups**: none. Velero is NOT installed in this cluster (`kubectl get crd | grep velero` is empty, there are no CronJobs), so the `savely-daily-backup` schedule mentioned in older notes does not exist. The only copy of the spend history is the MySQL PVC.
 
 ---
 
@@ -155,7 +164,7 @@ Repo secrets: `DOCKER_USERNAME=incept1on`, `DOCKER_PASSWORD` (Docker Hub token),
   - 16 pytest tests.
   - React+Vite frontend: login screen + **Spends** tab (quick add, current date) + **History** tab (add with date, edit, delete).
   - Dockerfiles for both, local nginx.conf.
-  - CI/CD workflows (`cicd-back.yml`, `cicd-front.yml`) mirroring watchly-3d-models.
+  - CI workflows (`ci-back.yml`, `ci-front.yml`) mirroring watchly-3d-models. CD (kubectl rollout) was removed later on purpose: deploy is manual.
 - Pushed the `savely` repo, plus the `inceptech` repo (manifest + load-balancer cert/mount) and the `nginx-inceptech-loadblalancer` repo (`savely-nginx.conf`).
 
 ### Backend bugfixes (runtime, found via in-cluster e2e)
@@ -186,7 +195,7 @@ Repo secrets: `DOCKER_USERNAME=incept1on`, `DOCKER_PASSWORD` (Docker Hub token),
 
 ### Secrets / infra
 - OpenBao: created `secret/data/savely` (AUTH_STRING + MySQL creds), updated `siyuan-reader` ACL policy to add `secret/metadata/savely[/...]` (list/read) + `secret/data/savely[/...]` (read); k8s auth role `siyuan-role` binds the `external-secrets` SA to that policy.
-- Velero: created schedule `savely-daily-backup`.
+- Velero: a `savely-daily-backup` schedule was intended but the cluster has no Velero CRDs — treat backups as absent.
 
 ### Verification (final state)
 - ArgoCD `savely` App: **Synced**, **Healthy**.
@@ -205,6 +214,19 @@ Repo secrets: `DOCKER_USERNAME=incept1on`, `DOCKER_PASSWORD` (Docker Hub token),
 - **Write path**: `create_spend`/`update_spend` classify with one attempt (no retries) and swallow failures — a classifier outage must never break saving. `manual` overrides are never re-labelled.
 - **API**: `GET /api/stats?month=&refresh=1`, `POST /api/stats/backfill`, `PATCH /api/spends/:id/category`. `POST /api/ai/analyze` now answers in the old shape from the classifier unless `CATEGORIES_BACKEND=llm`.
 - **Frontend**: `CategoryStats.tsx` (month selector, bars, per-category `<details>`, "confirm" badge + inline category fix), `SpendsTab` lost the cost gate/`ai_usage` line, `api.ts` lost the cost types.
-- Tests: 74 (was 45), including classifier-down, low-cosine, off-list label, manual-override-survives-refresh, dedupe and month scoping. The LLM tests are pinned to `CATEGORIES_BACKEND=llm` in the fixture.
+- Tests: 84 (was 45), including classifier-down, low-cosine, off-list label, manual-override-survives-refresh, dedupe and month scoping. The LLM tests are pinned to `CATEGORIES_BACKEND=llm` in the fixture.
 - **`app/classifier.py` gotcha**: the thread pool does **not** propagate Flask's app context, so worker functions take a `settings` dict resolved in the caller thread. A worker that reads `current_app` raises `RuntimeError: Working outside of application context` — only a real-HTTP test (`TestClassifierClient`, a `ThreadingHTTPServer`) catches it, mocks of the module do not.
-- **Not yet deployed**: the `classifier` + `mlflow` pods and the S3 dataset live in `~/devops/inceptech` (uncommitted at the time of writing). No classifier pod = `CLASSIFIER_URL` empty = every spend lands in «Другое», no errors.
+- **Not yet deployed**: the `classifier` + `mlflow` pods live in `~/devops/inceptech` (uncommitted at the time of writing). No classifier pod = `CLASSIFIER_URL` empty = every spend lands in «Другое», no errors.
+
+### Dataset export to S3 (weekly, `backend/dataset_export.py`)
+
+- The classifier learns from **one CSV in S3** (`savely-bucket/savely_spends.csv`, format `date;comment;amount;category`). That object is the only copy of the dataset — nothing regenerates it.
+- `dataset_export.py` is run by the `dataset-export` CronJob in `inceptech` (Sundays 04:00 MSK) using the backend image. It:
+  1. reads every row with `spend_categories.source = 'manual'` (`db.list_manual_labels`);
+  2. **merges** those into the object already in S3 — `manual` wins per comment, nothing is ever dropped;
+  3. uploads only if something actually changed;
+  4. calls `POST {CLASSIFIER_URL}/reload_data` (best-effort; a failed reload still leaves a good CSV for the next pod restart).
+- **Never export `source='knn'` rows.** Training on the model's own output just entrenches its mistakes; only human-confirmed labels are exported.
+- Guard: a *new* object is not written with fewer than `DATASET_MIN_ROWS` (30) rows — a nearly empty dataset is worse than none. Existing objects are exempt, because merging cannot shrink them.
+- `boto3` is in `requirements.txt` for this; `INIT_DB=0` is set in the CronJob so it never creates tables behind the app's back.
+- The job writes UTF-8 **without** BOM. The file currently in the bucket has one (`\ufeffdate` in pandas), which is harmless today because only `comment`/`category` are used — the first export fixes it anyway.

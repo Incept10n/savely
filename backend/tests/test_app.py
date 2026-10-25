@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import tempfile
@@ -1173,3 +1174,133 @@ class TestClassifierClient:
         assert results == {}
         assert meta["unique"] == 0
         assert handler.calls == []
+
+
+class TestManualLabels:
+    """The training set for the weekly S3 export."""
+
+    def _create(self, app, comment, source):
+        from app import db
+
+        with app.app_context():
+            row = db.create_spend(10, comment, datetime(2026, 10, 1, 12, 0, 0))
+            db.upsert_category(row["id"], "Продукты", 97.0, 0.94, source=source)
+            return row["id"]
+
+    def test_returns_only_manual_labels(self, app):
+        from app import db
+
+        self._create(app, "пятёрочка", "manual")
+        self._create(app, "такси", "knn")
+        self._create(app, "аптека", "fallback")
+        with app.app_context():
+            assert [r["comment"] for r in db.list_manual_labels()] == ["пятёрочка"]
+
+    def test_skips_empty_comments(self, app):
+        from app import db
+
+        self._create(app, "", "manual")
+        self._create(app, "   ", "manual")
+        with app.app_context():
+            assert db.list_manual_labels() == []
+
+    def test_carries_amount_date_and_category(self, app):
+        from app import db
+
+        self._create(app, "лампа", "manual")
+        with app.app_context():
+            row = db.list_manual_labels()[0]
+        assert row["category"] == "Продукты"
+        assert row["amount"] == 10
+
+    def test_date_formatting_covers_both_drivers(self):
+        import dataset_export as dx
+
+        # MySQL hands back a datetime, SQLite a string
+        assert dx.format_date(datetime(2026, 10, 1, 12, 0)) == "01.10.2026"
+        assert dx.format_date("2026-10-01 12:00:00") == "01.10.2026"
+        assert dx.format_date("") == ""
+        assert dx.format_date(None) == ""
+
+
+class FakeS3:
+    """Just enough of a boto3 client for `read_existing`."""
+
+    def __init__(self, body=None):
+        self.body = body
+
+    def get_object(self, Bucket, Key):  # noqa: N803 - boto3 signature
+        if self.body is None:
+            from botocore.exceptions import ClientError
+
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        return {"Body": io.BytesIO(self.body)}
+
+
+class TestDatasetExport:
+    def test_parses_the_real_file_format(self):
+        import dataset_export as dx
+
+        body = (
+            "\ufeffdate;comment;amount;category\n"
+            "17.10.2026;горшочек;147.00;Товары для дома\n"
+            "16.10.2026;булочка;94.00;Кафе и рестораны\n"
+        ).encode()
+        rows = dx.read_existing(FakeS3(body), "b", "k")
+        assert set(rows) == {"горшочек", "булочка"}
+        assert rows["горшочек"]["category"] == "Товары для дома"
+        assert rows["горшочек"]["date"] == "17.10.2026"
+
+    def test_missing_object_is_not_an_error(self):
+        import dataset_export as dx
+
+        assert dx.read_existing(FakeS3(), "b", "k") == {}
+
+    def test_merge_never_shrinks_and_manual_wins(self):
+        import dataset_export as dx
+
+        rows = {
+            "горшочек": {"date": "", "comment": "горшочек", "amount": "1.00", "category": "Другое"},
+        }
+        labels = [
+            {"comment": "Горшочек", "amount": 5, "spent_at": datetime(2026, 10, 1), "category": "Товары для дома"},
+            {"comment": "такси", "amount": 300, "spent_at": datetime(2026, 10, 2), "category": "Транспорт и такси"},
+        ]
+        merged, added, updated = dx.merge(rows, labels)
+        assert (added, updated) == (1, 1)
+        assert merged["горшочек"]["category"] == "Товары для дома"
+        assert merged["горшочек"]["date"] == "01.10.2026"
+        assert merged["такси"]["amount"] == "300.00"
+
+    def test_same_label_twice_changes_nothing(self):
+        import dataset_export as dx
+
+        labels = [
+            {"comment": "кино", "amount": 400, "spent_at": datetime(2026, 10, 3), "category": "Развлечения и подписки"},
+        ]
+        rows = {}
+        rows, added, _updated = dx.merge(rows, labels)
+        assert added == 1
+        rows, added, updated = dx.merge(rows, labels)
+        assert (added, updated) == (0, 0)
+
+    def test_rendered_file_round_trips(self):
+        import dataset_export as dx
+
+        labels = [
+            {"comment": "пятёрочка", "amount": 123.4, "spent_at": datetime(2026, 10, 1), "category": "Продукты"},
+        ]
+        rows, _a, _u = dx.merge({}, labels)
+        payload = dx.render(rows)
+        assert payload.startswith(b"date;comment;amount;category\n")
+        back = dx.read_existing(FakeS3(payload), "b", "k")
+        assert back["пятёрочка"]["category"] == "Продукты"
+        assert back["пятёрочка"]["amount"] == "123.40"
+
+    def test_refuses_a_tiny_new_dataset(self):
+        import dataset_export as dx
+
+        assert dx.should_upload(False, {}) is False
+        assert dx.should_upload(False, {str(i): i for i in range(5)}) is False
+        # an existing object is always safe to merge into, however small
+        assert dx.should_upload(True, {"x": 1}) is True
