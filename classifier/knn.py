@@ -15,10 +15,6 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "true"
 
 MODEL_NAME = os.getenv("MODEL_NAME", "intfloat/multilingual-e5-small")
 MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-server:5000")
-<<<<<<< HEAD
-=======
-
->>>>>>> 361bf75 (fix: small refac and readme update with api endpoints)
 
 mlflow.set_tracking_uri(MLFLOW_URI)
 mlflow.set_experiment("Savely_Spends_Production_API")
