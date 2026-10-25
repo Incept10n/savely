@@ -1,0 +1,31 @@
+[project]
+name = "classifier"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "sadeclipse", email = "nedoviziy2004@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "boto3>=1.43.118",
+    "fastapi>=0.149.0",
+    "httpx>=0.28.1",
+    "mlflow>=3.17.2",
+    "pandas>=3.0.6",
+    "pydantic>=2.14.1",
+    "requests>=2.34.2",
+    "torch>=2.14.1",
+    "transformers>=5.20.2",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+classifier = "classifier:main"
+
+[[tool.uv.index]]
+url = "https://pytorch.org/"
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
