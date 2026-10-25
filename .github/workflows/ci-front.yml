@@ -1,15 +1,19 @@
-name: ci-cd for classifier
+name: ci for front
+
+# Build + push only, no cluster access. A new image reaches the cluster when
+# someone runs `kubectl rollout restart deployment frontend -n savely`
+# (`imagePullPolicy: Always` + the mutable `:front` tag).
 
 on:
   push:
     branches: [ master ]
     paths:
-      - 'classifier/**'
+      - 'frontend/**'
   workflow_dispatch:
 
 jobs:
-  build-and-push-classifier:
-    name: Push classifier image to Docker Hub
+  build-and-push-front:
+    name: Push front Docker image to Docker Hub
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -36,23 +40,9 @@ jobs:
         id: push
         uses: docker/build-push-action@3b5e8027fcad23fda98b2e3ac259d8d67585f671
         with:
-          context: ./classifier
-          file: ./classifier/Dockerfile
+          context: ./frontend
+          file: ./frontend/Dockerfile
           push: true
-          tags: incept1on/savely:classifier
+          tags: incept1on/savely:front
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
-
-  deploy-classifier-prod:
-    name: Update k8s classifier image
-    runs-on: ubuntu-latest
-    needs: build-and-push-classifier
-    steps:
-      - name: Get kubectl binary
-        uses: tale/kubectl-action@v1
-        with:
-          base64-kube-config: ${{ secrets.KUBE_CONFIG }}
-
-      - name: Restart classifier deployment
-        run: |
-          kubectl rollout restart deployment classifier -n savely

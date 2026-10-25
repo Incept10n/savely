@@ -1,15 +1,20 @@
-name: ci-cd for front
+name: ci for classifier
+
+# Build + push only, no cluster access. The classifier image is large (torch
+# pulls the CUDA stack), so this job is slow and is NOT run on every push:
+# it is path-filtered to `classifier/**` and can be started by hand.
+# Deploy = `kubectl rollout restart deployment classifier -n savely`.
 
 on:
   push:
     branches: [ master ]
     paths:
-      - 'frontend/**'
+      - 'classifier/**'
   workflow_dispatch:
 
 jobs:
-  build-and-push-front:
-    name: Push front Docker image to Docker Hub
+  build-and-push-classifier:
+    name: Push classifier image to Docker Hub
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -36,27 +41,9 @@ jobs:
         id: push
         uses: docker/build-push-action@3b5e8027fcad23fda98b2e3ac259d8d67585f671
         with:
-          context: ./frontend
-          file: ./frontend/Dockerfile
+          context: ./classifier
+          file: ./classifier/Dockerfile
           push: true
-          tags: incept1on/savely:front
+          tags: incept1on/savely:classifier
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
-
-  deploy-front-prod:
-    name: Update k8s front image
-    runs-on: ubuntu-latest
-    needs: build-and-push-front
-    steps:
-      - name: Get kubectl binary
-        uses: tale/kubectl-action@v1
-        with:
-          base64-kube-config: ${{ secrets.KUBE_CONFIG }}
-
-      - name: Restart frontend deployment
-        run: |
-          kubectl rollout restart deployment frontend -n savely
-
-      - name: Wait for rollout to complete
-        run: |
-          kubectl rollout status deployment frontend -n savely --timeout=5m
