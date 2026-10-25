@@ -15,7 +15,7 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "true"
 S3_BUCKET = os.getenv("S3_BUCKET")
 S3_CSV_KEY = os.getenv("S3_CSV_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME", "intfloat/multilingual-e5-small")
-MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://your-mlflow-server:5000")
+MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-server:5000")
 
 mlflow.set_tracking_uri(MLFLOW_URI)
 mlflow.set_experiment("Savely_Spends_Production_API")

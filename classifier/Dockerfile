@@ -9,7 +9,7 @@ ENV UV_LINK_MODE=copy \
 
 COPY pyproject.toml uv.lock ./
 
-RUN uv sync --frozen --no-install-project --no-dev --no-cache
+RUN uv sync --frozen --no-install-project --no-dev --no-cache 
 
 FROM python:3.11-slim
 
@@ -20,9 +20,9 @@ COPY --from=builder /app/.venv /app/.venv
 COPY knn.py schemas.py ./
 
 ENV PATH="/app/.venv/bin:$PATH" \
-    HF_HUB_DISABLE_SYMLINKS_WARNING="true"
+    HF_HUB_DISABLE_SYMLINKS_WARNING="true" \
+    PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 
-CMD ["/app/.venv/bin/python", "-m", "uvicorn", "knn:app", "--host", "0.0.0.0", "--port", "8000"]
-
+CMD ["uvicorn", "knn:app", "--host", "0.0.0.0", "--port", "8000"]

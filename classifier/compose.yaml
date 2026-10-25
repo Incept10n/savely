@@ -28,15 +28,14 @@ services:
     depends_on:
       - mlflow_server  
     environment:
-      - S3_BUCKET=your-actual-s3-bucket-name
-      - S3_CSV_KEY=savely_spends.csv
-      - AWS_ACCESS_KEY_ID=your_aws_access_key_id
-      - AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
-      - AWS_DEFAULT_REGION=ru-central1  
-      
-      # Настройки MLflow и модели
-      - MODEL_NAME=intfloat/multilingual-e5-small
-      - MLFLOW_TRACKING_URI=http://mlflow_server:5000
+      - S3_BUCKET=${S3_BUCKET}
+      - S3_CSV_KEY=${S3_CSV_KEY}
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=us-east-1
+      - MODEL_NAME=${MODEL_NAME}
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}
     restart: unless-stopped
 
 volumes:
