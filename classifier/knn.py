@@ -12,10 +12,13 @@ from schemas import UserRequest
 
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "true"
 
-S3_BUCKET = os.getenv("S3_BUCKET")
-S3_CSV_KEY = os.getenv("S3_CSV_KEY")
+
 MODEL_NAME = os.getenv("MODEL_NAME", "intfloat/multilingual-e5-small")
 MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-server:5000")
+<<<<<<< HEAD
+=======
+
+>>>>>>> 361bf75 (fix: small refac and readme update with api endpoints)
 
 mlflow.set_tracking_uri(MLFLOW_URI)
 mlflow.set_experiment("Savely_Spends_Production_API")
@@ -46,12 +49,17 @@ def get_embedding(text, model, tokenizer):
 
 def download_csv_from_s3_to_memory() -> str:
     """Скачивание файла из S3 напрямую в RAM в виде строки"""
+    S3_BUCKET = os.getenv("S3_BUCKET")
+    S3_CSV_KEY = os.getenv("S3_CSV_KEY")
+    AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+    S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL")
     if not S3_BUCKET:
         raise ValueError(
             "Критическая ошибка: Переменная окружения S3_BUCKET не задана!"
         )
 
-    s3_client = boto3.client("s3")
+    s3_client = boto3.client("s3", endpoint_url=S3_ENDPOINT_URL)
     buffer = BytesIO()
     s3_client.download_fileobj(S3_BUCKET, S3_CSV_KEY, buffer)
     return buffer.getvalue().decode("utf-8")

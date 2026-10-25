@@ -36,6 +36,10 @@ services:
       - AWS_DEFAULT_REGION=us-east-1
       - MODEL_NAME=${MODEL_NAME}
       - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}
+<<<<<<< HEAD
+=======
+      - GIT_PYTHON_REFRESH=quiet
+>>>>>>> 361bf75 (fix: small refac and readme update with api endpoints)
     restart: unless-stopped
 
 volumes:
