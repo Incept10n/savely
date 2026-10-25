@@ -1,6 +1,9 @@
+import json
 import os
 import tempfile
+import threading
 from datetime import datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -1076,3 +1079,97 @@ class TestConfidenceConversion:
         name, _cosine, accepted = categories.resolve("Продукты", conf(0.9), 0.8)
         assert name == "Продукты"
         assert accepted is True
+
+
+class _PredictHandler(BaseHTTPRequestHandler):
+    """Minimal stand-in for classifier/knn.py's POST /predict."""
+
+    status = 200
+    payload = {"category": "Продукты", "confidence": 96.0}
+    calls = []
+
+    def do_POST(self):  # noqa: N802 - stdlib API
+        length = int(self.headers.get("Content-Length") or 0)
+        self.calls.append(json.loads(self.rfile.read(length)))
+        body = json.dumps(self.payload).encode()
+        self.send_response(self.status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):  # keep pytest output clean
+        pass
+
+
+class TestClassifierClient:
+    @pytest.fixture()
+    def server(self, app):
+        handler = type("Handler", (_PredictHandler,), {"calls": []})
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        app.config["CLASSIFIER_URL"] = f"http://127.0.0.1:{httpd.server_address[1]}"
+        app.config["CLASSIFIER_MAX_RETRIES"] = 0
+        yield handler, httpd.server_address[1]
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+
+    def test_predict_one_over_http(self, app, server):
+        from app import classifier
+
+        handler, _port = server
+        with app.app_context():
+            assert classifier.predict_one("Пятёрочка") == {
+                "category": "Продукты",
+                "confidence": 96.0,
+            }
+        # the service expects the raw text, it normalizes on its own side
+        assert handler.calls == [{"word": "Пятёрочка"}]
+
+    def test_predict_many_dedupes_comments(self, app, server):
+        from app import classifier
+
+        handler, _port = server
+        with app.app_context():
+            results, meta = classifier.predict_many(["Пятёрочка", "пятёрочка ", "такси"])
+
+        assert set(results) == {"пятёрочка", "такси"}
+        assert meta["unique"] == 2
+        assert meta["failed"] == 0
+        assert meta["degraded"] is False
+        # one probe + one more request for the remaining unique comment
+        assert len(handler.calls) == 2
+
+    def test_503_marks_degraded(self, app, server):
+        from app import classifier
+
+        handler, _port = server
+        handler.status = 503
+        with app.app_context():
+            results, meta = classifier.predict_many(["продукты", "такси"])
+        assert results == {}
+        assert meta["degraded"] is True
+        assert meta["failed"] == 2
+
+    def test_unreachable_service_is_not_an_exception(self, app):
+        from app import classifier
+
+        app.config["CLASSIFIER_URL"] = "http://127.0.0.1:1"
+        app.config["CLASSIFIER_MAX_RETRIES"] = 0
+        with app.app_context():
+            assert classifier.predict_one("x") is None
+            results, meta = classifier.predict_many(["x", "y"])
+        assert results == {}
+        assert meta["degraded"] is True
+
+    def test_empty_comments_never_reach_the_service(self, app, server):
+        from app import classifier
+
+        handler, _port = server
+        with app.app_context():
+            results, meta = classifier.predict_many(["", "   "])
+        assert results == {}
+        assert meta["unique"] == 0
+        assert handler.calls == []

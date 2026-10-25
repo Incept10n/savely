@@ -45,13 +45,14 @@ def is_enabled():
     return bool(_settings()["url"])
 
 
-def predict_one(word, retries=None):
-    """One request. Returns `{"category", "confidence"}` or `None`."""
-    settings = _settings()
-    if not settings["url"]:
-        return None
-    attempts = (settings["retries"] if retries is None else retries) + 1
+def _post_predict(settings, word, attempts):
+    """One `/predict` call, `attempts` tries. Never raises.
 
+    `settings` is passed in explicitly: this function also runs inside a
+    `ThreadPoolExecutor`, where Flask's app-context contextvar is not
+    propagated (reading `current_app` there raises "working outside of
+    application context").
+    """
     for attempt in range(attempts):
         try:
             resp = requests.post(
@@ -86,6 +87,15 @@ def predict_one(word, retries=None):
         }
 
     return None
+
+
+def predict_one(word, retries=None):
+    """One request. Returns `{"category", "confidence"}` or `None`."""
+    settings = _settings()
+    if not settings["url"]:
+        return None
+    attempts = (settings["retries"] if retries is None else retries) + 1
+    return _post_predict(settings, word, attempts)
 
 
 def predict_many(comments):
@@ -134,10 +144,16 @@ def predict_many(comments):
     rest = keys[1:]
     if rest:
         # The classifier answers one word per request; the pool keeps the total
-        # wall time at ~ceil(n / concurrency) round trips.
+        # wall time at ~ceil(n / concurrency) round trips. Settings are captured
+        # here because the pool threads have no Flask app context.
+        attempts = settings["retries"] + 1
         workers = min(settings["concurrency"], len(rest))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            for key, answer in zip(rest, pool.map(predict_one, (words[k] for k in rest))):
+            answers = pool.map(
+                lambda word: _post_predict(settings, word, attempts),
+                (words[k] for k in rest),
+            )
+            for key, answer in zip(rest, answers):
                 if answer is None:
                     meta["failed"] += 1
                 else:

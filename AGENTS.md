@@ -117,7 +117,7 @@ To test against the in-cluster DB: `kubectl port-forward svc/mysql 3306:3306 -n 
 cd backend && . .venv/bin/activate && python -m pytest -q
 ```
 
-69 tests in `backend/tests/test_app.py`, all using a SQLite temp-file fixture (no live DB needed). Run before pushing backend changes; CI also runs them in the `test-back` job.
+74 tests in `backend/tests/test_app.py`, all using a SQLite temp-file fixture (no live DB needed). Run before pushing backend changes; CI also runs them in the `test-back` job.
 
 ## local dev frontend
 
@@ -205,5 +205,6 @@ Repo secrets: `DOCKER_USERNAME=incept1on`, `DOCKER_PASSWORD` (Docker Hub token),
 - **Write path**: `create_spend`/`update_spend` classify with one attempt (no retries) and swallow failures — a classifier outage must never break saving. `manual` overrides are never re-labelled.
 - **API**: `GET /api/stats?month=&refresh=1`, `POST /api/stats/backfill`, `PATCH /api/spends/:id/category`. `POST /api/ai/analyze` now answers in the old shape from the classifier unless `CATEGORIES_BACKEND=llm`.
 - **Frontend**: `CategoryStats.tsx` (month selector, bars, per-category `<details>`, "confirm" badge + inline category fix), `SpendsTab` lost the cost gate/`ai_usage` line, `api.ts` lost the cost types.
-- Tests: 69 (was 45), including classifier-down, low-cosine, off-list label, manual-override-survives-refresh, dedupe and month scoping. The LLM tests are pinned to `CATEGORIES_BACKEND=llm` in the fixture.
+- Tests: 74 (was 45), including classifier-down, low-cosine, off-list label, manual-override-survives-refresh, dedupe and month scoping. The LLM tests are pinned to `CATEGORIES_BACKEND=llm` in the fixture.
+- **`app/classifier.py` gotcha**: the thread pool does **not** propagate Flask's app context, so worker functions take a `settings` dict resolved in the caller thread. A worker that reads `current_app` raises `RuntimeError: Working outside of application context` — only a real-HTTP test (`TestClassifierClient`, a `ThreadingHTTPServer`) catches it, mocks of the module do not.
 - **Not yet deployed**: the `classifier` + `mlflow` pods and the S3 dataset live in `~/devops/inceptech` (uncommitted at the time of writing). No classifier pod = `CLASSIFIER_URL` empty = every spend lands in «Другое», no errors.
