@@ -1,4 +1,8 @@
-name: ci-cd for front
+name: ci for front
+
+# Build + push only, no cluster access. A new image reaches the cluster when
+# someone runs `kubectl rollout restart deployment frontend -n savely`
+# (`imagePullPolicy: Always` + the mutable `:front` tag).
 
 on:
   push:
@@ -42,21 +46,3 @@ jobs:
           tags: incept1on/savely:front
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
-
-  deploy-front-prod:
-    name: Update k8s front image
-    runs-on: ubuntu-latest
-    needs: build-and-push-front
-    steps:
-      - name: Get kubectl binary
-        uses: tale/kubectl-action@v1
-        with:
-          base64-kube-config: ${{ secrets.KUBE_CONFIG }}
-
-      - name: Restart frontend deployment
-        run: |
-          kubectl rollout restart deployment frontend -n savely
-
-      - name: Wait for rollout to complete
-        run: |
-          kubectl rollout status deployment frontend -n savely --timeout=5m

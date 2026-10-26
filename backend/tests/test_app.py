@@ -1,6 +1,10 @@
+import io
+import json
 import os
 import tempfile
+import threading
 from datetime import datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -38,6 +42,10 @@ def app():
             "YANDEX_AI_MODEL_URI": "gpt://folder-test/yandexgpt-5.1/latest",
             "YANDEX_AI_INPUT_PRICE_PER_1K": 0.8,
             "YANDEX_AI_OUTPUT_PRICE_PER_1K": 0.8,
+            # The legacy AI tests below exercise the YandexGPT path on purpose.
+            "CATEGORIES_BACKEND": "llm",
+            # No classifier by default: no test may reach the network.
+            "CLASSIFIER_URL": "",
         }
     )
     yield app
@@ -755,3 +763,544 @@ class TestAi:
 
             db.init_db()
             db.init_db()
+
+
+class FakeClassifier:
+    """Stand-in for `app.classifier` so no test touches the network."""
+
+    def __init__(self):
+        self.answers = {}
+        self.down = False
+        self.calls = []
+
+    @staticmethod
+    def key(comment):
+        return " ".join((comment or "").strip().casefold().split())
+
+    def predict_one(self, word, retries=None):
+        self.calls.append(word)
+        if self.down:
+            return None
+        return self.answers.get(self.key(word))
+
+    def predict_many(self, comments):
+        keys = {}
+        for comment in comments:
+            normalized = self.key(comment)
+            if normalized:
+                keys.setdefault(normalized, comment)
+        self.calls.extend(keys.values())
+        if self.down:
+            return {}, {
+                "unique": len(keys),
+                "failed": len(keys),
+                "latencyMs": 3,
+                "degraded": True,
+            }
+        results = {k: self.answers[k] for k in keys if k in self.answers}
+        return results, {
+            "unique": len(keys),
+            "failed": len(keys) - len(results),
+            "latencyMs": 7,
+            "degraded": not results,
+        }
+
+
+# confidence as reported by the service: ((cos + 1) / 2) * 100
+def conf(cosine):
+    return round((cosine + 1) / 2 * 100, 2)
+
+
+@pytest.fixture()
+def knn(app, monkeypatch):
+    import app.classifier as classifier
+
+    fake = FakeClassifier()
+    app.config["CATEGORIES_BACKEND"] = "knn"
+    app.config["CLASSIFIER_URL"] = "http://classifier.test"
+    monkeypatch.setattr(classifier, "predict_one", fake.predict_one)
+    monkeypatch.setattr(classifier, "predict_many", fake.predict_many)
+    monkeypatch.setattr(classifier, "is_enabled", lambda: True)
+    return fake
+
+
+class TestCategoryReport:
+    def test_stats_requires_auth(self, client):
+        assert client.get("/api/stats").status_code == 401
+
+    def test_disabled_classifier_still_reports_every_spend(self, client):
+        _post(client, {"amount": 100, "comment": "продукты"})
+        _post(client, {"amount": 50, "comment": "такси"})
+        body = client.get("/api/stats", headers=AUTH_HEADER).get_json()
+
+        assert [c["name"] for c in body["byCategory"]] == ["Другое"]
+        assert body["total"] == 150
+        assert body["byCategory"][0]["total"] == 150
+        assert body["metrics"]["unclassified"] == 2
+        assert body["metrics"]["degraded"] is True
+
+    def test_aggregates_by_category(self, knn, client):
+        knn.answers = {
+            "продукты": {"category": "Продукты", "confidence": conf(0.92)},
+            "такси": {"category": "Транспорт и такси", "confidence": conf(0.94)},
+        }
+        _post(client, {"amount": 100, "comment": "продукты"})
+        _post(client, {"amount": 250.5, "comment": "продукты"})
+        _post(client, {"amount": 49.5, "comment": "такси"})
+
+        body = client.get("/api/stats", headers=AUTH_HEADER).get_json()
+        cats = {c["name"]: c for c in body["byCategory"]}
+
+        assert cats["Продукты"]["total"] == 350.5
+        assert cats["Продукты"]["count"] == 2
+        assert cats["Продукты"]["share"] == pytest.approx(87.6, abs=0.05)
+        assert cats["Продукты"]["avg"] == 175.25
+        assert cats["Транспорт и такси"]["share"] == pytest.approx(12.4, abs=0.05)
+        # buckets must add up to the month total, no money may vanish
+        assert sum(c["total"] for c in cats.values()) == body["total"] == 400.0
+        # sorted by amount, biggest first
+        assert [c["name"] for c in body["byCategory"]] == [
+            "Продукты",
+            "Транспорт и такси",
+        ]
+        assert body["metrics"]["rows"] == 3
+        assert "Top category" in body["summary"]
+
+    def test_second_report_uses_stored_categories(self, knn, client):
+        knn.answers = {"продукты": {"category": "Продукты", "confidence": conf(0.9)}}
+        _post(client, {"amount": 10, "comment": "продукты"})
+
+        client.get("/api/stats", headers=AUTH_HEADER)
+        knn.calls.clear()
+        client.get("/api/stats", headers=AUTH_HEADER)
+        # the classifier is asked once per unique comment, then the DB answers
+        assert knn.calls == []
+
+    def test_duplicate_comments_classified_once(self, knn, client):
+        knn.answers = {"пятёрочка": {"category": "Продукты", "confidence": conf(0.9)}}
+        for _ in range(3):
+            _post(client, {"amount": 10, "comment": "Пятёрочка "})
+        knn.calls.clear()
+        client.get("/api/stats", headers=AUTH_HEADER)
+        assert len([c for c in knn.calls if c.strip().lower() == "пятёрочка"]) <= 1
+
+    def test_low_similarity_becomes_other(self, knn, client):
+        # cos 0.60 is under CLASSIFIER_COSINE_FLOOR (0.80): the service's own
+        # 0.40 cut-off would have accepted this label.
+        knn.answers = {"невалинк": {"category": "Продукты", "confidence": conf(0.60)}}
+        _post(client, {"amount": 100, "comment": "невалинк"})
+        body = client.get("/api/stats", headers=AUTH_HEADER).get_json()
+
+        assert [c["name"] for c in body["byCategory"]] == ["Другое"]
+        assert body["byCategory"][0]["spends"][0]["cosine"] == pytest.approx(0.6)
+        assert body["metrics"]["lowConfidence"] == 1
+
+    def test_off_list_label_folds_to_other(self, knn, client):
+        knn.answers = {
+            "криптобиржа": {"category": "Криптовалюта", "confidence": conf(0.95)}
+        }
+        _post(client, {"amount": 100, "comment": "криптобиржа"})
+        body = client.get("/api/stats", headers=AUTH_HEADER).get_json()
+        assert [c["name"] for c in body["byCategory"]] == ["Другое"]
+
+    def test_classifier_down_keeps_saved_categories(self, knn, client):
+        knn.answers = {"продукты": {"category": "Продукты", "confidence": conf(0.9)}}
+        _post(client, {"amount": 100, "comment": "продукты"})
+        client.get("/api/stats", headers=AUTH_HEADER)
+
+        knn.down = True
+        _post(client, {"amount": 50, "comment": "новое"})
+        body = client.get("/api/stats", headers=AUTH_HEADER).get_json()
+
+        cats = {c["name"]: c for c in body["byCategory"]}
+        assert cats["Продукты"]["total"] == 100
+        assert cats["Другое"]["total"] == 50
+        assert body["metrics"]["degraded"] is True
+        assert body["metrics"]["unclassified"] == 1
+
+    def test_manual_override_survives_refresh(self, knn, client):
+        knn.answers = {"продукты": {"category": "Продукты", "confidence": conf(0.9)}}
+        created = _post(client, {"amount": 100, "comment": "продукты"}).get_json()
+
+        resp = client.patch(
+            f"/api/spends/{created['id']}/category",
+            json={"category": "Путешествия"},
+            headers=AUTH_HEADER,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["source"] == "manual"
+
+        body = client.get("/api/stats?refresh=1", headers=AUTH_HEADER).get_json()
+        assert [c["name"] for c in body["byCategory"]] == ["Путешествия"]
+        assert body["metrics"]["lowConfidence"] == 0
+
+    def test_manual_override_rejects_unknown_category(self, client):
+        created = _post(client, {"amount": 100, "comment": "x"}).get_json()
+        resp = client.patch(
+            f"/api/spends/{created['id']}/category",
+            json={"category": "Криптовалюта"},
+            headers=AUTH_HEADER,
+        )
+        assert resp.status_code == 400
+
+    def test_override_missing_spend_is_404(self, client):
+        resp = client.patch(
+            "/api/spends/9999/category",
+            json={"category": "Продукты"},
+            headers=AUTH_HEADER,
+        )
+        assert resp.status_code == 404
+
+    def test_create_classifies_immediately(self, knn, app, client):
+        knn.answers = {"такси": {"category": "Транспорт и такси", "confidence": conf(0.93)}}
+        created = _post(client, {"amount": 300, "comment": "такси"}).get_json()
+        with app.app_context():
+            from app import db
+
+            assert db.get_spend_category(created["id"])["category"] == "Транспорт и такси"
+
+    def test_update_comment_reclassifies(self, knn, app, client):
+        knn.answers = {
+            "продукты": {"category": "Продукты", "confidence": conf(0.9)},
+            "кино": {"category": "Развлечения и подписки", "confidence": conf(0.9)},
+        }
+        created = _post(client, {"amount": 10, "comment": "продукты"}).get_json()
+        client.put(
+            f"/api/spends/{created['id']}",
+            json={"amount": 10, "comment": "кино"},
+            headers=AUTH_HEADER,
+        )
+        with app.app_context():
+            from app import db
+
+            assert (
+                db.get_spend_category(created["id"])["category"]
+                == "Развлечения и подписки"
+            )
+
+    def test_delete_spend_drops_category(self, knn, app, client):
+        knn.answers = {"продукты": {"category": "Продукты", "confidence": conf(0.9)}}
+        created = _post(client, {"amount": 10, "comment": "продукты"}).get_json()
+        client.delete(f"/api/spends/{created['id']}", headers=AUTH_HEADER)
+        with app.app_context():
+            from app import db
+
+            assert db.get_spend_category(created["id"]) is None
+
+    def test_month_param_scopes_the_report(self, knn, client):
+        knn.answers = {"продукты": {"category": "Продукты", "confidence": conf(0.9)}}
+        _post(client, {"amount": 10, "comment": "продукты", "date": _month_date(1)})
+        _post(client, {"amount": 20, "comment": "продукты", "date": _last_month_date(1)})
+
+        last_month = datetime.now().replace(day=1) - timedelta(days=1)
+        key = last_month.strftime("%Y-%m")
+        body = client.get(f"/api/stats?month={key}", headers=AUTH_HEADER).get_json()
+        assert body["month"] == key
+        assert body["metrics"]["rows"] == 1
+        assert body["total"] == 20
+
+    def test_invalid_month_rejected(self, client):
+        assert client.get("/api/stats?month=2026-13", headers=AUTH_HEADER).status_code == 400
+        assert client.get("/api/stats?month=ja", headers=AUTH_HEADER).status_code == 400
+
+    def test_backfill_classifies_history(self, knn, client):
+        knn.down = True
+        _post(client, {"amount": 10, "comment": "продукты"})
+        _post(client, {"amount": 20, "comment": "такси"})
+        assert client.get("/api/stats", headers=AUTH_HEADER).get_json()["metrics"]["unclassified"] == 2
+
+        knn.down = False
+        knn.answers = {
+            "продукты": {"category": "Продукты", "confidence": conf(0.9)},
+            "такси": {"category": "Транспорт и такси", "confidence": conf(0.9)},
+        }
+        body = client.post("/api/stats/backfill", headers=AUTH_HEADER).get_json()
+        assert body == {
+            "scanned": 2,
+            "classified": 2,
+            "failed": 0,
+            "degraded": False,
+        }
+        stats = client.get("/api/stats", headers=AUTH_HEADER).get_json()
+        assert stats["metrics"]["unclassified"] == 0
+
+    def test_empty_month_report(self, client):
+        body = client.get("/api/stats", headers=AUTH_HEADER).get_json()
+        assert body["byCategory"] == []
+        assert body["total"] == 0
+        assert body["metrics"]["rows"] == 0
+
+    def test_analyze_answers_from_classifier_by_default(self, knn, client):
+        knn.answers = {"продукты": {"category": "Продукты", "confidence": conf(0.9)}}
+        _post(client, {"amount": 10, "comment": "продукты"})
+        body = client.post("/api/ai/analyze", headers=AUTH_HEADER).get_json()
+        assert [c["name"] for c in body["categories"]] == ["Продукты"]
+        assert body["notice"]
+        assert "estimatedCost" not in body["metrics"]
+
+
+class TestMonthBounds:
+    def test_bounds_for_explicit_month(self):
+        from app import categories
+
+        start, end = categories.month_bounds("2026-02")
+        assert start.isoformat() == "2026-02-01T00:00:00"
+        assert end.isoformat() == "2026-03-01T00:00:00"
+
+    def test_bounds_cross_the_year(self):
+        from app import categories
+
+        start, end = categories.month_bounds("2026-12")
+        assert (start.year, start.month) == (2026, 12)
+        assert (end.year, end.month) == (2027, 1)
+
+    def test_bad_month_raises(self):
+        from app import categories
+
+        with pytest.raises(ValueError):
+            categories.month_bounds("2026-19")
+
+
+class TestConfidenceConversion:
+    def test_round_trip(self):
+        from app import categories
+
+        assert categories.confidence_to_cosine(conf(0.9)) == pytest.approx(0.9)
+        assert categories.confidence_to_cosine(None) is None
+        assert categories.confidence_to_cosine("nope") is None
+
+    def test_floor_replaces_label(self):
+        from app import categories
+
+        name, cosine, accepted = categories.resolve("Продукты", conf(0.5), 0.8)
+        assert name == "Другое"
+        assert accepted is False
+        assert cosine == pytest.approx(0.5)
+
+        name, _cosine, accepted = categories.resolve("Продукты", conf(0.9), 0.8)
+        assert name == "Продукты"
+        assert accepted is True
+
+
+class _PredictHandler(BaseHTTPRequestHandler):
+    """Minimal stand-in for classifier/knn.py's POST /predict."""
+
+    status = 200
+    payload = {"category": "Продукты", "confidence": 96.0}
+    calls = []
+
+    def do_POST(self):  # noqa: N802 - stdlib API
+        length = int(self.headers.get("Content-Length") or 0)
+        self.calls.append(json.loads(self.rfile.read(length)))
+        body = json.dumps(self.payload).encode()
+        self.send_response(self.status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):  # keep pytest output clean
+        pass
+
+
+class TestClassifierClient:
+    @pytest.fixture()
+    def server(self, app):
+        handler = type("Handler", (_PredictHandler,), {"calls": []})
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        app.config["CLASSIFIER_URL"] = f"http://127.0.0.1:{httpd.server_address[1]}"
+        app.config["CLASSIFIER_MAX_RETRIES"] = 0
+        yield handler, httpd.server_address[1]
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+
+    def test_predict_one_over_http(self, app, server):
+        from app import classifier
+
+        handler, _port = server
+        with app.app_context():
+            assert classifier.predict_one("Пятёрочка") == {
+                "category": "Продукты",
+                "confidence": 96.0,
+            }
+        # the service expects the raw text, it normalizes on its own side
+        assert handler.calls == [{"word": "Пятёрочка"}]
+
+    def test_predict_many_dedupes_comments(self, app, server):
+        from app import classifier
+
+        handler, _port = server
+        with app.app_context():
+            results, meta = classifier.predict_many(["Пятёрочка", "пятёрочка ", "такси"])
+
+        assert set(results) == {"пятёрочка", "такси"}
+        assert meta["unique"] == 2
+        assert meta["failed"] == 0
+        assert meta["degraded"] is False
+        # one probe + one more request for the remaining unique comment
+        assert len(handler.calls) == 2
+
+    def test_503_marks_degraded(self, app, server):
+        from app import classifier
+
+        handler, _port = server
+        handler.status = 503
+        with app.app_context():
+            results, meta = classifier.predict_many(["продукты", "такси"])
+        assert results == {}
+        assert meta["degraded"] is True
+        assert meta["failed"] == 2
+
+    def test_unreachable_service_is_not_an_exception(self, app):
+        from app import classifier
+
+        app.config["CLASSIFIER_URL"] = "http://127.0.0.1:1"
+        app.config["CLASSIFIER_MAX_RETRIES"] = 0
+        with app.app_context():
+            assert classifier.predict_one("x") is None
+            results, meta = classifier.predict_many(["x", "y"])
+        assert results == {}
+        assert meta["degraded"] is True
+
+    def test_empty_comments_never_reach_the_service(self, app, server):
+        from app import classifier
+
+        handler, _port = server
+        with app.app_context():
+            results, meta = classifier.predict_many(["", "   "])
+        assert results == {}
+        assert meta["unique"] == 0
+        assert handler.calls == []
+
+
+class TestManualLabels:
+    """The training set for the weekly S3 export."""
+
+    def _create(self, app, comment, source):
+        from app import db
+
+        with app.app_context():
+            row = db.create_spend(10, comment, datetime(2026, 10, 1, 12, 0, 0))
+            db.upsert_category(row["id"], "Продукты", 97.0, 0.94, source=source)
+            return row["id"]
+
+    def test_returns_only_manual_labels(self, app):
+        from app import db
+
+        self._create(app, "пятёрочка", "manual")
+        self._create(app, "такси", "knn")
+        self._create(app, "аптека", "fallback")
+        with app.app_context():
+            assert [r["comment"] for r in db.list_manual_labels()] == ["пятёрочка"]
+
+    def test_skips_empty_comments(self, app):
+        from app import db
+
+        self._create(app, "", "manual")
+        self._create(app, "   ", "manual")
+        with app.app_context():
+            assert db.list_manual_labels() == []
+
+    def test_carries_amount_date_and_category(self, app):
+        from app import db
+
+        self._create(app, "лампа", "manual")
+        with app.app_context():
+            row = db.list_manual_labels()[0]
+        assert row["category"] == "Продукты"
+        assert row["amount"] == 10
+
+    def test_date_formatting_covers_both_drivers(self):
+        import dataset_export as dx
+
+        # MySQL hands back a datetime, SQLite a string
+        assert dx.format_date(datetime(2026, 10, 1, 12, 0)) == "01.10.2026"
+        assert dx.format_date("2026-10-01 12:00:00") == "01.10.2026"
+        assert dx.format_date("") == ""
+        assert dx.format_date(None) == ""
+
+
+class FakeS3:
+    """Just enough of a boto3 client for `read_existing`."""
+
+    def __init__(self, body=None):
+        self.body = body
+
+    def get_object(self, Bucket, Key):  # noqa: N803 - boto3 signature
+        if self.body is None:
+            from botocore.exceptions import ClientError
+
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        return {"Body": io.BytesIO(self.body)}
+
+
+class TestDatasetExport:
+    def test_parses_the_real_file_format(self):
+        import dataset_export as dx
+
+        body = (
+            "\ufeffdate;comment;amount;category\n"
+            "17.10.2026;горшочек;147.00;Товары для дома\n"
+            "16.10.2026;булочка;94.00;Кафе и рестораны\n"
+        ).encode()
+        rows = dx.read_existing(FakeS3(body), "b", "k")
+        assert set(rows) == {"горшочек", "булочка"}
+        assert rows["горшочек"]["category"] == "Товары для дома"
+        assert rows["горшочек"]["date"] == "17.10.2026"
+
+    def test_missing_object_is_not_an_error(self):
+        import dataset_export as dx
+
+        assert dx.read_existing(FakeS3(), "b", "k") == {}
+
+    def test_merge_never_shrinks_and_manual_wins(self):
+        import dataset_export as dx
+
+        rows = {
+            "горшочек": {"date": "", "comment": "горшочек", "amount": "1.00", "category": "Другое"},
+        }
+        labels = [
+            {"comment": "Горшочек", "amount": 5, "spent_at": datetime(2026, 10, 1), "category": "Товары для дома"},
+            {"comment": "такси", "amount": 300, "spent_at": datetime(2026, 10, 2), "category": "Транспорт и такси"},
+        ]
+        merged, added, updated = dx.merge(rows, labels)
+        assert (added, updated) == (1, 1)
+        assert merged["горшочек"]["category"] == "Товары для дома"
+        assert merged["горшочек"]["date"] == "01.10.2026"
+        assert merged["такси"]["amount"] == "300.00"
+
+    def test_same_label_twice_changes_nothing(self):
+        import dataset_export as dx
+
+        labels = [
+            {"comment": "кино", "amount": 400, "spent_at": datetime(2026, 10, 3), "category": "Развлечения и подписки"},
+        ]
+        rows = {}
+        rows, added, _updated = dx.merge(rows, labels)
+        assert added == 1
+        rows, added, updated = dx.merge(rows, labels)
+        assert (added, updated) == (0, 0)
+
+    def test_rendered_file_round_trips(self):
+        import dataset_export as dx
+
+        labels = [
+            {"comment": "пятёрочка", "amount": 123.4, "spent_at": datetime(2026, 10, 1), "category": "Продукты"},
+        ]
+        rows, _a, _u = dx.merge({}, labels)
+        payload = dx.render(rows)
+        assert payload.startswith(b"date;comment;amount;category\n")
+        back = dx.read_existing(FakeS3(payload), "b", "k")
+        assert back["пятёрочка"]["category"] == "Продукты"
+        assert back["пятёрочка"]["amount"] == "123.40"
+
+    def test_refuses_a_tiny_new_dataset(self):
+        import dataset_export as dx
+
+        assert dx.should_upload(False, {}) is False
+        assert dx.should_upload(False, {str(i): i for i in range(5)}) is False
+        # an existing object is always safe to merge into, however small
+        assert dx.should_upload(True, {"x": 1}) is True

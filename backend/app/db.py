@@ -46,6 +46,31 @@ CREATE TABLE IF NOT EXISTS ai_usage (
 """
 
 
+SPEND_CATEGORIES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS spend_categories (
+    spend_id INTEGER PRIMARY KEY,
+    category TEXT NOT NULL,
+    confidence REAL,
+    cosine REAL,
+    source TEXT NOT NULL DEFAULT 'knn',
+    classifier_rev TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+MYSQL_SPEND_CATEGORIES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS spend_categories (
+    spend_id INT PRIMARY KEY,
+    category VARCHAR(64) NOT NULL,
+    confidence DECIMAL(5,2) NULL,
+    cosine DECIMAL(6,4) NULL,
+    source VARCHAR(16) NOT NULL DEFAULT 'knn',
+    classifier_rev VARCHAR(64) NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+
 def _is_sqlite():
     return current_app.config["DB_TYPE"] == "sqlite"
 
@@ -180,6 +205,13 @@ def delete_spend(spend_id, conn=None):
         cur = _execute(conn, "DELETE FROM spends WHERE id = ?", (spend_id,))
         affected = cur.rowcount
         cur.close()
+        if affected > 0:
+            # No FK cascade: SQLite would need `PRAGMA foreign_keys = ON`,
+            # which is one dialect-specific branch too many for one row.
+            cur = _execute(
+                conn, "DELETE FROM spend_categories WHERE spend_id = ?", (spend_id,)
+            )
+            cur.close()
         conn.commit()
         return affected > 0
     finally:
@@ -215,6 +247,12 @@ def init_db():
         _execute(
             conn,
             MYSQL_AI_USAGE_SCHEMA if not _is_sqlite() else AI_USAGE_SCHEMA,
+        )
+        _execute(
+            conn,
+            MYSQL_SPEND_CATEGORIES_SCHEMA
+            if not _is_sqlite()
+            else SPEND_CATEGORIES_SCHEMA,
         )
         try:
             _ensure_index(conn, "spends", "spent_at")
@@ -274,6 +312,164 @@ def get_ai_cost_since(since_dt, conn=None):
         row = cur.fetchone()
         cur.close()
         return float(row["total"]) if row else 0.0
+    finally:
+        if close:
+            conn.close()
+
+
+# --- spend_categories -------------------------------------------------------
+# Categories live in their own table instead of extra columns on `spends`:
+# `init_db()` uses CREATE TABLE IF NOT EXISTS, so a new table needs no ALTER on
+# the live MySQL instance and no migration step at all.
+
+
+def _category_row(row):
+    if not row:
+        return None
+    return {
+        "spend_id": int(row["spend_id"]),
+        "category": row["category"],
+        "confidence": float(row["confidence"]) if row["confidence"] is not None else None,
+        "cosine": float(row["cosine"]) if row["cosine"] is not None else None,
+        "source": row["source"],
+    }
+
+
+def upsert_category(
+    spend_id,
+    category,
+    confidence=None,
+    cosine=None,
+    source="knn",
+    classifier_rev=None,
+    conn=None,
+):
+    close = conn is None
+    if conn is None:
+        conn = _connection()
+    params = (spend_id, category, confidence, cosine, source, classifier_rev)
+    try:
+        if _is_sqlite():
+            _execute(
+                conn,
+                "INSERT INTO spend_categories "
+                "(spend_id, category, confidence, cosine, source, classifier_rev) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(spend_id) DO UPDATE SET "
+                "category=excluded.category, confidence=excluded.confidence, "
+                "cosine=excluded.cosine, source=excluded.source, "
+                "classifier_rev=excluded.classifier_rev, "
+                "updated_at=CURRENT_TIMESTAMP",
+                params,
+            )
+        else:
+            # MySQL has no ON CONFLICT; VALUES() keeps this readable on 8.0.
+            _execute(
+                conn,
+                "INSERT INTO spend_categories "
+                "(spend_id, category, confidence, cosine, source, classifier_rev) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON DUPLICATE KEY UPDATE "
+                "category=VALUES(category), confidence=VALUES(confidence), "
+                "cosine=VALUES(cosine), source=VALUES(source), "
+                "classifier_rev=VALUES(classifier_rev), "
+                "updated_at=CURRENT_TIMESTAMP",
+                params,
+            )
+        conn.commit()
+    finally:
+        if close:
+            conn.close()
+
+
+def get_spend_category(spend_id, conn=None):
+    close = conn is None
+    if conn is None:
+        conn = _connection()
+    try:
+        cur = _execute(
+            conn,
+            "SELECT spend_id, category, confidence, cosine, source "
+            "FROM spend_categories WHERE spend_id = ?",
+            (spend_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        return _category_row(row)
+    finally:
+        if close:
+            conn.close()
+
+
+def get_categories(spend_ids, conn=None):
+    """`{spend_id: category row}` for the given ids (one query, not N)."""
+    ids = [int(i) for i in spend_ids]
+    if not ids:
+        return {}
+    close = conn is None
+    if conn is None:
+        conn = _connection()
+    try:
+        placeholders = ",".join("?" for _ in ids)
+        cur = _execute(
+            conn,
+            "SELECT spend_id, category, confidence, cosine, source "
+            f"FROM spend_categories WHERE spend_id IN ({placeholders})",
+            tuple(ids),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return {int(r["spend_id"]): _category_row(r) for r in rows}
+    finally:
+        if close:
+            conn.close()
+
+
+def list_spends_without_category(limit=2000, conn=None):
+    """History rows that were never classified (backfill input)."""
+    close = conn is None
+    if conn is None:
+        conn = _connection()
+    try:
+        cur = _execute(
+            conn,
+            "SELECT s.id, s.amount, s.comment, s.spent_at FROM spends s "
+            "LEFT JOIN spend_categories c ON c.spend_id = s.id "
+            "WHERE c.spend_id IS NULL "
+            "ORDER BY s.spent_at DESC, s.id DESC LIMIT ?",
+            (int(limit),),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return [dict(r) for r in rows]
+    finally:
+        if close:
+            conn.close()
+
+
+
+def list_manual_labels(conn=None):
+    """Every spend whose category a human confirmed (`source='manual'`).
+
+    This is the training set for the weekly dataset export: only labels the
+    user picked are exported, never the classifier's own output — training on
+    that just reinforces its mistakes. Empty comments are skipped: they carry
+    no text to embed.
+    """
+    close = conn is None
+    if conn is None:
+        conn = _connection()
+    try:
+        cur = _execute(
+            conn,
+            "SELECT s.id, s.amount, s.comment, s.spent_at, c.category "
+            "FROM spends s JOIN spend_categories c ON c.spend_id = s.id "
+            "WHERE c.source = 'manual' AND TRIM(s.comment) <> '' "
+            "ORDER BY s.spent_at ASC, s.id ASC",
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return [dict(r) for r in rows]
     finally:
         if close:
             conn.close()

@@ -1,4 +1,9 @@
-name: ci-cd for back
+name: ci for back
+
+# Build + push only. Deployment into the cluster is deliberately NOT done here:
+# no kubectl, no KUBE_CONFIG. A new image reaches the cluster when someone runs
+# `kubectl rollout restart deployment backend -n savely` (the Deployment uses
+# `imagePullPolicy: Always` with the mutable `:back` tag).
 
 on:
   push:
@@ -63,21 +68,3 @@ jobs:
           tags: incept1on/savely:back
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
-
-  deploy-back-prod:
-    name: Update k8s back image
-    runs-on: ubuntu-latest
-    needs: build-and-push-back
-    steps:
-      - name: Get kubectl binary
-        uses: tale/kubectl-action@v1
-        with:
-          base64-kube-config: ${{ secrets.KUBE_CONFIG }}
-
-      - name: Restart backend deployment
-        run: |
-          kubectl rollout restart deployment backend -n savely
-
-      - name: Wait for rollout to complete
-        run: |
-          kubectl rollout status deployment backend -n savely --timeout=5m

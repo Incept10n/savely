@@ -87,43 +87,57 @@ export function deleteSpend(id: number) {
   return request<void>(`/spends/${id}`, { method: 'DELETE' })
 }
 
-export interface AiCategory {
+export interface CategorySpend {
+  id: number
+  date: string
+  amount: number
+  comment: string
+  confidence: number | null
+  cosine: number | null
+  source: 'knn' | 'manual' | 'fallback' | 'none' | string
+  needsReview: boolean
+}
+
+export interface CategoryStat {
   name: string
   total: number
   count: number
   share: number
-  spends: { date: string; amount: number; comment: string }[]
+  avg: number
+  spends: CategorySpend[]
 }
 
-export interface AiMetrics {
+export interface StatsMetrics {
   rows: number
   uniqueComments: number
-  estimatedInputTokens: number
-  estimatedOutputTokens: number
-  estimatedCost: number
-  actualCost: number
-  totalRub: number
-  maxOutputTokens: number
+  classified: number
+  unclassified: number
+  lowConfidence: number
+  latencyMs: number
+  degraded: boolean
 }
 
-export interface AiAnalysis {
-  categories: AiCategory[]
-  notice: string
+export interface MonthStats {
   month: string
-  metrics: AiMetrics
+  total: number
+  byCategory: CategoryStat[]
+  summary: string
+  categories: string[]
+  metrics: StatsMetrics
+  classifier: { enabled: boolean; cosineFloor: number; reviewCosine: number }
 }
 
-export function analyzeSpends() {
-  return request<AiAnalysis>('/ai/analyze', { method: 'POST' })
+export function getStats(month?: string, refresh = false) {
+  const params = new URLSearchParams()
+  if (month) params.set('month', month)
+  if (refresh) params.set('refresh', '1')
+  const query = params.toString()
+  return request<MonthStats>(`/stats${query ? `?${query}` : ''}`)
 }
 
-export interface AiCost {
-  totalCostRub: number
-  todayCostRub: number
-  dailyLimitRub: number
-}
-
-export function getAiCost(since?: number) {
-  const query = since !== undefined ? `?since=${since}` : ''
-  return request<AiCost>(`/ai/cost${query}`)
+export function setSpendCategory(id: number, category: string) {
+  return request<{ id: number; category: string; source: string }>(
+    `/spends/${id}/category`,
+    { method: 'PATCH', body: JSON.stringify({ category }) },
+  )
 }

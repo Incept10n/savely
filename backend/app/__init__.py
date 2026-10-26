@@ -35,13 +35,27 @@ def create_app(test_config=None):
         not in ("0", "false", ""),
         YANDEX_AI_MAX_COST_PER_REQUEST=float(os.environ.get("YANDEX_AI_MAX_COST_PER_REQUEST", "50")),
         YANDEX_AI_DAILY_LIMIT=float(os.environ.get("YANDEX_AI_DAILY_LIMIT", "15")),
+        # Which engine fills the category report: the local kNN classifier
+        # (`classifier/`, free and deterministic) or the legacy YandexGPT path.
+        CATEGORIES_BACKEND=os.environ.get("CATEGORIES_BACKEND", "knn").strip().lower(),
+        # Empty URL = classification disabled: spends are still saved, the
+        # report simply shows them under «Другое» until a service is wired up.
+        CLASSIFIER_URL=os.environ.get("CLASSIFIER_URL", ""),
+        CLASSIFIER_TIMEOUT=float(os.environ.get("CLASSIFIER_TIMEOUT", "3")),
+        CLASSIFIER_MAX_RETRIES=int(os.environ.get("CLASSIFIER_MAX_RETRIES", "1")),
+        CLASSIFIER_CONCURRENCY=int(os.environ.get("CLASSIFIER_CONCURRENCY", "8")),
+        # The service reports ((cos + 1) / 2) * 100; we invert it and decide
+        # here. Below the floor the spend becomes «Другое», below the review
+        # line it stays but is flagged for a human to confirm.
+        CLASSIFIER_COSINE_FLOOR=float(os.environ.get("CLASSIFIER_COSINE_FLOOR", "0.80")),
+        CLASSIFIER_REVIEW_COSINE=float(os.environ.get("CLASSIFIER_REVIEW_COSINE", "0.86")),
     )
 
     if test_config is not None:
         app.config.update(test_config)
 
     from .auth import require_auth
-    from .routes import ai_bp, bp
+    from .routes import ai_bp, bp, stats_bp
 
     @app.get("/api/health")
     def health():
@@ -54,6 +68,7 @@ def create_app(test_config=None):
 
     app.register_blueprint(bp)
     app.register_blueprint(ai_bp)
+    app.register_blueprint(stats_bp)
 
     if app.config["INIT_DB"]:
         with app.app_context():
