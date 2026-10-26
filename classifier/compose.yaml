@@ -1,19 +1,19 @@
 services:
   mlflow_server:
-    image: ghcr.io/mlflow/mlflow:v2.19.0  
+    image: dhi.io/mlflow:3  
     container_name: mlflow_server
     ports:
       - "5000:5000"  
     networks:
       - ml_network
     volumes:
-      - mlflow_data:/mlflow_store  
+      - mlflow_sqlite_data:/BackgroundStore  
     command: >
-      mlflow server 
-      --backend-store-uri sqlite:////mlflow_store/mlflow.db 
-      --default-artifact-root /mlflow_store/artifacts 
+      server 
+      --backend-store-uri sqlite:///BackgroundStore/mlflow.db 
       --host 0.0.0.0 
       --port 5000
+      --allowed-hosts *
     restart: unless-stopped
 
   knn_service:
@@ -40,7 +40,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  mlflow_data:  
+  mlflow_sqlite_data: 
 
 networks:
   ml_network:   
